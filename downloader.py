@@ -41,3 +41,30 @@ async def download_video(url: str) -> str:
     Runs synchronously but wrapped to not block the event loop.
     """
     return await asyncio.to_thread(_download_video_sync, url)
+
+def _download_audio_sync(query: str) -> str:
+    file_id = str(uuid.uuid4())
+    output_template = os.path.join(DOWNLOADS_DIR, f"{file_id}.%(ext)s")
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': output_template,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': True,
+        'no_warnings': True,
+    }
+    
+    with YoutubeDL(ydl_opts) as ydl:
+        ydl.extract_info(query, download=True)
+        
+    return os.path.join(DOWNLOADS_DIR, f"{file_id}.mp3")
+
+async def download_audio(query: str) -> str:
+    """
+    Downloads audio from the given query (URL or ytsearch).
+    """
+    return await asyncio.to_thread(_download_audio_sync, query)

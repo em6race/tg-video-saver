@@ -8,8 +8,9 @@ from dotenv import load_dotenv
 from telegram import Update, BotCommand, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-from downloader import download_video
+from downloader import download_video, download_audio
 from tiktok_api import fetch_tiktok_data
+from spotify_api import get_spotify_track_name
 
 # Load environment variables
 load_dotenv()
@@ -49,7 +50,9 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
         
-    await update.message.reply_text("Перезапускаю бота... 🔄")
+    await update.message.reply_text("Перезавантажується... 🔄")
+    import asyncio
+    await asyncio.sleep(1)
     os.execv(sys.executable, ['python'] + sys.argv)
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -68,7 +71,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 for i, photo_path in enumerate(data["media"]):
                     f = open(photo_path, 'rb')
                     opened_files.append(f)
-                    media_group.append(InputMediaPhoto(f, caption="Ось ваше слайдшоу! 🖼" if i == 0 else ""))
+                    media_group.append(InputMediaPhoto(f))
                 
                 try:
                     await update.message.reply_media_group(media=media_group, write_timeout=60, read_timeout=60, pool_timeout=60)
@@ -82,7 +85,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 # Send audio if available
                 if data.get("audio"):
                     with open(data["audio"], 'rb') as audio_file:
-                        await update.message.reply_audio(audio=audio_file, caption="Музика з відео 🎵", write_timeout=60, read_timeout=60, pool_timeout=60)
+                        await update.message.reply_audio(audio=audio_file, write_timeout=60, read_timeout=60, pool_timeout=60)
                     if os.path.exists(data["audio"]):
                         os.remove(data["audio"])
             else:
@@ -92,7 +95,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     try:
                         await update.message.reply_video(
                             video=video_file,
-                            caption="Ось ваше відео! 🎬",
                             write_timeout=60,
                             read_timeout=60,
                             pool_timeout=60
@@ -102,7 +104,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                         video_file.seek(0)
                         await update.message.reply_document(
                             document=video_file,
-                            caption="Ось ваш файл (не вдалося відправити як відео) 🎬",
                             write_timeout=60,
                             read_timeout=60,
                             pool_timeout=60
@@ -110,6 +111,22 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 if os.path.exists(video_path):
                     os.remove(video_path)
                     
+        elif "spotify.com" in url:
+            # Download Spotify track via yt-dlp search
+            track_name = await get_spotify_track_name(url)
+            search_query = f"ytsearch1:{track_name} audio"
+            file_path = await download_audio(search_query)
+            
+            with open(file_path, 'rb') as audio_file:
+                await update.message.reply_audio(
+                    audio=audio_file,
+                    write_timeout=60,
+                    read_timeout=60,
+                    pool_timeout=60
+                )
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                
         else:
             # Download video using yt-dlp for non-TikTok links
             file_path = await download_video(url)
@@ -119,7 +136,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 try:
                     await update.message.reply_video(
                         video=video_file,
-                        caption="Ось ваше відео! 🎬",
                         write_timeout=60,
                         read_timeout=60,
                         pool_timeout=60
@@ -129,7 +145,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     video_file.seek(0)
                     await update.message.reply_document(
                         document=video_file,
-                        caption="Ось ваш файл (не вдалося відправити як відео) 🎬",
                         write_timeout=60,
                         read_timeout=60,
                         pool_timeout=60
