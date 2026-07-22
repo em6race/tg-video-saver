@@ -42,7 +42,7 @@ async def download_video(url: str) -> str:
     """
     return await asyncio.to_thread(_download_video_sync, url)
 
-def _download_audio_sync(query: str) -> str:
+def _download_audio_sync(query: str) -> dict:
     file_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOADS_DIR, f"{file_id}.%(ext)s")
     
@@ -56,14 +56,28 @@ def _download_audio_sync(query: str) -> str:
         }],
         'quiet': True,
         'no_warnings': True,
+        'noplaylist': True,
     }
     
     with YoutubeDL(ydl_opts) as ydl:
-        ydl.extract_info(query, download=True)
+        info = ydl.extract_info(query, download=True)
         
-    return os.path.join(DOWNLOADS_DIR, f"{file_id}.mp3")
+    thumbnail = None
+    if info.get('thumbnails'):
+        thumbnail = info['thumbnails'][-1]['url']
+    elif info.get('thumbnail'):
+        thumbnail = info['thumbnail']
+        
+    performer = info.get('artist') or info.get('uploader') or info.get('creator') or 'Unknown Artist'
+        
+    return {
+        'file_path': os.path.join(DOWNLOADS_DIR, f"{file_id}.mp3"),
+        'title': info.get('title', 'Unknown Title'),
+        'performer': performer,
+        'thumbnail_url': thumbnail
+    }
 
-async def download_audio(query: str) -> str:
+async def download_audio(query: str) -> dict:
     """
     Downloads audio from the given query (URL or ytsearch).
     """

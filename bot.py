@@ -123,11 +123,22 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 if os.path.exists(video_path):
                     os.remove(video_path)
                     
-        elif "spotify" in url:
-            # Download Spotify track via yt-dlp search
-            track_info = await get_spotify_track_info(url)
-            search_query = f"ytsearch1:{track_info['search_query']} audio"
-            file_path = await download_audio(search_query)
+        elif any(domain in url for domain in ["spotify.com", "spotify.link", "spotify:", "music.youtube.com", "soundcloud.com"]):
+            # For Spotify, we fetch metadata first then search YT. 
+            # For YT Music / SoundCloud, we pass the URL directly to yt-dlp.
+            if "spotify" in url:
+                track_info = await get_spotify_track_info(url)
+                search_query = f"ytsearch1:{track_info['search_query']} audio"
+                audio_result = await download_audio(search_query)
+            else:
+                audio_result = await download_audio(url)
+                track_info = {
+                    "title": audio_result["title"],
+                    "performer": audio_result["performer"],
+                    "thumbnail_url": audio_result["thumbnail_url"]
+                }
+                
+            file_path = audio_result["file_path"]
             
             thumb_path = None
             if track_info.get("thumbnail_url"):
