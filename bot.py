@@ -14,7 +14,7 @@ from downloader import download_video
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
+ADMIN_ID = os.getenv("ADMIN_ID")
 
 if not TOKEN:
     raise ValueError("No BOT_TOKEN provided. Please set it in .env file.")
@@ -42,8 +42,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    username = update.message.from_user.username
-    if ADMIN_USERNAME and username != ADMIN_USERNAME:
+    user_id = str(update.message.from_user.id)
+    if ADMIN_ID and user_id != ADMIN_ID:
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
         
