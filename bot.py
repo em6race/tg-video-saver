@@ -111,7 +111,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 if os.path.exists(video_path):
                     os.remove(video_path)
                     
-        elif "spotify.com" in url:
+        elif "spotify" in url:
             # Download Spotify track via yt-dlp search
             track_name = await get_spotify_track_name(url)
             search_query = f"ytsearch1:{track_name} audio"
