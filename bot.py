@@ -59,7 +59,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     url = update.message.text
     
     # Send a waiting message
-    status_msg = await update.message.reply_text("⏳ Завантажую відео, зачекайте...")
+    status_msg = await update.message.reply_text("⏳ Завантажую, зачекайте...")
     
     try:
         if "tiktok.com" in url:
