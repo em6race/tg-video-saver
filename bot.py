@@ -53,9 +53,16 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
         
-    await update.message.reply_text("Перезавантажується... 🔄")
+    await update.message.reply_text("⏳ Завантажую оновлення з GitHub і перезавантажуюсь... 🔄")
     import asyncio
     await asyncio.sleep(1)
+    
+    import subprocess
+    try:
+        subprocess.run(["git", "pull"], check=True)
+    except Exception as e:
+        logger.error(f"Git pull failed during restart: {e}")
+        
     os.execv(sys.executable, ['python'] + sys.argv)
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
