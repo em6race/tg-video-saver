@@ -11,6 +11,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from downloader import download_video, download_audio
 from tiktok_api import fetch_tiktok_data
 from spotify_api import get_spotify_track_name
+import pytz
+from datetime import datetime
+import subprocess
 
 # Load environment variables
 load_dotenv()
@@ -191,6 +194,10 @@ async def post_init(application: Application) -> None:
             await application.bot.send_message(chat_id=int(ADMIN_ID), text="Бот успішно запущений і готовий до роботи! ✅")
         except Exception as e:
             logger.warning(f"Could not send startup message to admin: {e}")
+            
+    # Start auto-update task
+    import asyncio
+    asyncio.create_task(auto_update(application))
 
 def main() -> None:
     print("Starting bot...")
@@ -211,6 +218,29 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+async def auto_update(application: Application) -> None:
+    tz = pytz.timezone('Europe/Kiev')
+    while True:
+        now = datetime.now(tz)
+        if now.hour == 3 and now.minute == 0:
+            if ADMIN_ID:
+                try:
+                    await application.bot.send_message(chat_id=int(ADMIN_ID), text="🕒 3:00 ночі. Завантажую оновлення з GitHub і перезапускаюсь... 🔄")
+                except Exception:
+                    pass
+            
+            try:
+                subprocess.run(["git", "pull"], check=True)
+            except Exception as e:
+                logger.error(f"Git pull failed: {e}")
+                
+            import asyncio
+            await asyncio.sleep(2)
+            os.execv(sys.executable, ['python'] + sys.argv)
+            
+        import asyncio
+        await asyncio.sleep(60)
 
 if __name__ == "__main__":
     main()
