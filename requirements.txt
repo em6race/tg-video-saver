@@ -1,3 +1,4 @@
 python-telegram-bot>=20.0
 yt-dlp>=2024.03.10
 python-dotenv>=1.0.1
+aiohttp>=3.8.0
