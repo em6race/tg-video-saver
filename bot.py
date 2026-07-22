@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import re
 import threading
@@ -13,6 +14,7 @@ from downloader import download_video
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
 
 if not TOKEN:
     raise ValueError("No BOT_TOKEN provided. Please set it in .env file.")
@@ -38,6 +40,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "4. Чекаєш кілька секунд/хвилин і отримуєш відео у форматі MP4.\n\n"
         "Підтримувані платформи: TikTok, Instagram, YouTube, Twitter та багато інших!"
     )
+
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    username = update.message.from_user.username
+    if ADMIN_USERNAME and username != ADMIN_USERNAME:
+        await update.message.reply_text("У вас немає прав для цієї команди 🚫")
+        return
+        
+    await update.message.reply_text("Перезапускаю бота... 🔄")
+    os.execv(sys.executable, ['python'] + sys.argv)
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     url = update.message.text
@@ -106,6 +117,7 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("restart", restart_command))
     
     # Regex to match URLs
     url_pattern = re.compile(r'https?://[^\s]+')
