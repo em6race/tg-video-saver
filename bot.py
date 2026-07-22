@@ -16,6 +16,8 @@ from datetime import datetime
 import subprocess
 import time
 import aiohttp
+from PIL import Image
+import io
 
 # Load environment variables
 load_dotenv()
@@ -67,11 +69,27 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
     os.execv(sys.executable, ['python'] + sys.argv)
 
+async def send_typing_action(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from telegram.constants import ChatAction
+    while True:
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            import asyncio
+            await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            import asyncio
+            await asyncio.sleep(4)
+
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     url = update.message.text
     
     # Send a waiting message
     status_msg = await update.message.reply_text("⏳ Завантажую, зачекайте...")
+    
+    import asyncio
+    typing_task = asyncio.create_task(send_typing_action(update.message.chat_id, context))
     
     try:
         if "tiktok.com" in url:
@@ -147,8 +165,10 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     async with aiohttp.ClientSession() as session:
                         async with session.get(track_info["thumbnail_url"]) as resp:
                             if resp.status == 200:
-                                with open(thumb_path, 'wb') as f:
-                                    f.write(await resp.read())
+                                img_bytes = await resp.read()
+                                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                                img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                                img.save(thumb_path, "JPEG", quality=90)
                 except Exception as e:
                     logger.warning(f"Failed to download thumbnail: {e}")
                     thumb_path = None
@@ -201,12 +221,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             if os.path.exists(file_path):
                 os.remove(file_path)
         
-        # Delete the waiting message
-        await status_msg.delete()
-        
     except Exception as e:
-        logger.error(f"Error downloading {url}: {e}")
-        await status_msg.edit_text(f"❌ Сталася помилка при завантаженні відео.\n\nДеталі помилки (перешліть розробнику):\n`{e}`", parse_mode="Markdown")
+        logger.error(f"Error handling URL: {e}")
+        await update.message.reply_text(f"❌ Сталася помилка при завантаженні відео.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
+        
+    finally:
+        typing_task.cancel()
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
 
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Будь ласка, відправте мені дійсне посилання на відео.")
