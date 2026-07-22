@@ -10,10 +10,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from downloader import download_video, download_audio
 from tiktok_api import fetch_tiktok_data
-from spotify_api import get_spotify_track_name
+from spotify_api import get_spotify_track_info
 import pytz
 from datetime import datetime
 import subprocess
+import time
+import aiohttp
 
 # Load environment variables
 load_dotenv()
@@ -123,19 +125,43 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     
         elif "spotify" in url:
             # Download Spotify track via yt-dlp search
-            track_name = await get_spotify_track_name(url)
-            search_query = f"ytsearch1:{track_name} audio"
+            track_info = await get_spotify_track_info(url)
+            search_query = f"ytsearch1:{track_info['search_query']} audio"
             file_path = await download_audio(search_query)
             
+            thumb_path = None
+            if track_info.get("thumbnail_url"):
+                thumb_path = f"downloads/thumb_{int(time.time())}.jpg"
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(track_info["thumbnail_url"]) as resp:
+                            if resp.status == 200:
+                                with open(thumb_path, 'wb') as f:
+                                    f.write(await resp.read())
+                except Exception as e:
+                    logger.warning(f"Failed to download thumbnail: {e}")
+                    thumb_path = None
+            
             with open(file_path, 'rb') as audio_file:
-                await update.message.reply_audio(
-                    audio=audio_file,
-                    write_timeout=60,
-                    read_timeout=60,
-                    pool_timeout=60
-                )
+                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
+                try:
+                    await update.message.reply_audio(
+                        audio=audio_file,
+                        title=track_info["title"],
+                        performer=track_info["performer"],
+                        thumbnail=thumb_file,
+                        write_timeout=60,
+                        read_timeout=60,
+                        pool_timeout=60
+                    )
+                finally:
+                    if thumb_file:
+                        thumb_file.close()
+                        
             if os.path.exists(file_path):
                 os.remove(file_path)
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
                 
         else:
             # Download video using yt-dlp for non-TikTok links
