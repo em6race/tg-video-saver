@@ -5,10 +5,11 @@ import re
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, BotCommand, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from downloader import download_video
+from tiktok_api import fetch_tiktok_data
 
 # Load environment variables
 load_dotenv()
@@ -32,14 +33,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Як це працює:\n"
-        "1. Знаходиш цікаве відео.\n"
-        "2. Копіюєш посилання.\n"
-        "3. Відправляєш це посилання мені.\n"
-        "4. Чекаєш кілька секунд/хвилин і отримуєш відео у форматі MP4.\n\n"
-        "Підтримувані платформи: TikTok, Instagram, YouTube, Twitter та багато інших!"
+    help_text = (
+        "Щоб завантажити відео, фото або звук з TikTok, Twitter, YouTube Shorts, SoundCloud та інших — надішли мені посилання 😉\n\n"
+        "Можливості бота:\n"
+        "🔹 Завантаження відео без водяних знаків;\n"
+        "🔹 Завантаження фото-слайдшоу;\n"
+        "🔹 Завантаження аудіо;\n"
+        "🔹 Висока якість завантаження."
     )
+    await update.message.reply_text(help_text)
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.message.from_user.id)
@@ -57,32 +59,85 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     status_msg = await update.message.reply_text("⏳ Завантажую відео, зачекайте...")
     
     try:
-        # Download video
-        file_path = await download_video(url)
-        
-        # Send video
-        with open(file_path, 'rb') as video_file:
-            try:
-                await update.message.reply_video(
-                    video=video_file,
-                    caption="Ось ваше відео! 🎬",
-                    write_timeout=60,
-                    read_timeout=60,
-                    pool_timeout=60
-                )
-            except Exception as vid_e:
-                logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
-                video_file.seek(0)
-                await update.message.reply_document(
-                    document=video_file,
-                    caption="Ось ваш файл (не вдалося відправити як відео) 🎬",
-                    write_timeout=60,
-                    read_timeout=60,
-                    pool_timeout=60
-                )
-        
-        # Clean up the file after sending
-        os.remove(file_path)
+        if "tiktok.com" in url:
+            data = await fetch_tiktok_data(url)
+            
+            if data["type"] == "slideshow":
+                media_group = []
+                opened_files = []
+                for i, photo_path in enumerate(data["media"]):
+                    f = open(photo_path, 'rb')
+                    opened_files.append(f)
+                    media_group.append(InputMediaPhoto(f, caption="Ось ваше слайдшоу! 🖼" if i == 0 else ""))
+                
+                try:
+                    await update.message.reply_media_group(media=media_group, write_timeout=60, read_timeout=60, pool_timeout=60)
+                finally:
+                    for f in opened_files:
+                        f.close()
+                    for photo_path in data["media"]:
+                        if os.path.exists(photo_path):
+                            os.remove(photo_path)
+                
+                # Send audio if available
+                if data.get("audio"):
+                    with open(data["audio"], 'rb') as audio_file:
+                        await update.message.reply_audio(audio=audio_file, caption="Музика з відео 🎵", write_timeout=60, read_timeout=60, pool_timeout=60)
+                    if os.path.exists(data["audio"]):
+                        os.remove(data["audio"])
+            else:
+                # Normal video from TikTok API
+                video_path = data["media"][0]
+                with open(video_path, 'rb') as video_file:
+                    try:
+                        await update.message.reply_video(
+                            video=video_file,
+                            caption="Ось ваше відео! 🎬",
+                            write_timeout=60,
+                            read_timeout=60,
+                            pool_timeout=60
+                        )
+                    except Exception as vid_e:
+                        logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
+                        video_file.seek(0)
+                        await update.message.reply_document(
+                            document=video_file,
+                            caption="Ось ваш файл (не вдалося відправити як відео) 🎬",
+                            write_timeout=60,
+                            read_timeout=60,
+                            pool_timeout=60
+                        )
+                if os.path.exists(video_path):
+                    os.remove(video_path)
+                    
+        else:
+            # Download video using yt-dlp for non-TikTok links
+            file_path = await download_video(url)
+            
+            # Send video
+            with open(file_path, 'rb') as video_file:
+                try:
+                    await update.message.reply_video(
+                        video=video_file,
+                        caption="Ось ваше відео! 🎬",
+                        write_timeout=60,
+                        read_timeout=60,
+                        pool_timeout=60
+                    )
+                except Exception as vid_e:
+                    logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
+                    video_file.seek(0)
+                    await update.message.reply_document(
+                        document=video_file,
+                        caption="Ось ваш файл (не вдалося відправити як відео) 🎬",
+                        write_timeout=60,
+                        read_timeout=60,
+                        pool_timeout=60
+                    )
+            
+            # Clean up the file after sending
+            if os.path.exists(file_path):
+                os.remove(file_path)
         
         # Delete the waiting message
         await status_msg.delete()
@@ -107,13 +162,21 @@ def run_dummy_server():
     print(f"Dummy web server started on port {port}")
     server.serve_forever()
 
+async def post_init(application: Application) -> None:
+    commands = [
+        BotCommand("start", "Запустити бота"),
+        BotCommand("help", "Як користуватися та можливості"),
+        BotCommand("restart", "Перезапустити бота (для адміна)"),
+    ]
+    await application.bot.set_my_commands(commands)
+
 def main() -> None:
     print("Starting bot...")
     
     # Start the dummy web server in a background thread for Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
-    application = Application.builder().token(TOKEN).build()
+    application = Application.builder().token(TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
