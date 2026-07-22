@@ -188,7 +188,7 @@ async def post_init(application: Application) -> None:
     # Send startup message to admin
     if ADMIN_ID:
         try:
-            await application.bot.send_message(chat_id=ADMIN_ID, text="Бот успішно запущений і готовий до роботи! ✅")
+            await application.bot.send_message(chat_id=int(ADMIN_ID), text="Бот успішно запущений і готовий до роботи! ✅")
         except Exception as e:
             logger.warning(f"Could not send startup message to admin: {e}")
 
