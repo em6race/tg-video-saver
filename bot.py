@@ -289,7 +289,9 @@ def main() -> None:
 
 async def auto_update(application: Application) -> None:
     tz = pytz.timezone('Europe/Kiev')
+    import asyncio
     while True:
+        await asyncio.sleep(60)
         now = datetime.now(tz)
         if now.hour == 3 and now.minute == 0:
             if ADMIN_ID:
@@ -303,12 +305,8 @@ async def auto_update(application: Application) -> None:
             except Exception as e:
                 logger.error(f"Git pull failed: {e}")
                 
-            import asyncio
             await asyncio.sleep(2)
             os.execv(sys.executable, ['python'] + sys.argv)
-            
-        import asyncio
-        await asyncio.sleep(60)
 
 if __name__ == "__main__":
     main()
