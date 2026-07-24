@@ -97,6 +97,24 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     typing_task = asyncio.create_task(send_typing_action(update.message.chat_id, context))
     
     try:
+        supported_domains = [
+            "tiktok.com",
+            "youtube.com", "youtu.be",
+            "instagram.com",
+            "twitter.com", "x.com",
+            "spotify.com", "spotify.link", "spotify:",
+            "music.youtube.com",
+            "soundcloud.com"
+        ]
+        
+        if not any(domain in url.lower() for domain in supported_domains):
+            await update.message.reply_text("Вибачте, але я поки що не підтримую завантаження з цього сайту 😔\n\nЯ вмію працювати з: **TikTok, YouTube, Instagram, Twitter(X), Spotify та SoundCloud**. Спробуйте надіслати посилання з цих платформ!", parse_mode="Markdown")
+            return
+            
+        if any(x in url.lower() for x in ["/album/", "/playlist/", "/artist/", "/podcast/", "/show/", "/episode/", "/user/"]) and any(domain in url.lower() for domain in ["spotify", "music.youtube", "soundcloud"]):
+            await update.message.reply_text("Вибачте, але я поки що не вмію завантажувати цілі альбоми, плейлисти чи подкасти 😔\n\nБудь ласка, надішліть посилання на **окремий трек** (пісню), і я з радістю його завантажу! 🎵", parse_mode="Markdown")
+            return
+
         if "tiktok.com" in url:
             data = await fetch_tiktok_data(url)
             
