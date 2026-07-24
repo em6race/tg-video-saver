@@ -47,12 +47,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "🎥 *Відео та Фото*\n"
         "• *TikTok*: Завантажую відео без водяного знаку + окремо відправляю музику з нього!\n"
         "• *TikTok Слайди*: Завантажую всі фотографії зі слайдшоу + музику.\n"
-        "• *YouTube, Instagram (Reels), Twitter (X)* та інші: Завантажую відео у найкращій якості.\n\n"
+        "• *YouTube, Instagram (Reels), Twitter (X)*\n\n"
         "🎵 *Музика*\n"
-        "• *Spotify, SoundCloud, YouTube Music*: Просто киньте лінк на трек, і я відправлю вам повноцінний аудіофайл (MP3) з правильною назвою, виконавцем та красивою обкладинкою!\n\n"
-        "🛠 *Додатково*\n"
-        "• Якщо щось не завантажується, просто перевірте посилання.\n\n"
-        "🚀 *Чекаю на ваші лінки!*"
+        "• *Spotify, SoundCloud, YouTube Music*"     
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
