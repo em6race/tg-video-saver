@@ -42,14 +42,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = (
-        "Щоб завантажити відео, фото або звук з TikTok, Twitter, YouTube Shorts, SoundCloud та інших — надішли мені посилання 😉\n\n"
-        "Можливості бота:\n"
-        "🔹 Завантаження відео без водяних знаків;\n"
-        "🔹 Завантаження фото-слайдшоу;\n"
-        "🔹 Завантаження аудіо;\n"
-        "🔹 Висока якість завантаження."
+        "👋 *Що я вмію?*\n\n"
+        "Я універсальний бот для завантаження медіа! Просто надішліть мені посилання, і я зроблю все інше.\n\n"
+        "🎥 *Відео та Фото*\n"
+        "• *TikTok*: Завантажую відео без водяного знаку + окремо відправляю музику з нього!\n"
+        "• *TikTok Слайди*: Завантажую всі фотографії зі слайдшоу + музику.\n"
+        "• *YouTube, Instagram (Reels), Twitter (X)* та інші: Завантажую відео у найкращій якості.\n\n"
+        "🎵 *Музика*\n"
+        "• *Spotify, SoundCloud, YouTube Music*: Просто киньте лінк на трек, і я відправлю вам повноцінний аудіофайл (MP3) з правильною назвою, виконавцем та красивою обкладинкою!\n\n"
+        "🛠 *Додатково*\n"
+        "• Якщо щось не завантажується, просто перевірте посилання.\n\n"
+        "🚀 *Чекаю на ваші лінки!*"
     )
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(help_text, parse_mode="Markdown")
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.message.from_user.id)
