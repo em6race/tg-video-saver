@@ -20,6 +20,7 @@ def _download_video_sync(url: str) -> str:
         'no_warnings': True,
         'merge_output_format': 'mp4',
         'postprocessor_args': ['-threads', '1'],
+        'extractor_args': {'youtube': {'player_client': ['android']}},
     }
     
     with YoutubeDL(ydl_opts) as ydl:
@@ -56,13 +57,23 @@ def _download_audio_sync(query: str) -> dict:
             'preferredquality': '192',
         }],
         'postprocessor_args': ['-threads', '1'],
+        'extractor_args': {'youtube': {'player_client': ['android']}},
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
     }
     
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=True)
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=True)
+    except Exception as e:
+        if "ytsearch" in query:
+            # Fallback to soundcloud search if youtube fails
+            fallback_query = query.replace("ytsearch", "scsearch")
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(fallback_query, download=True)
+        else:
+            raise e
         
     thumbnail = None
     if info.get('thumbnails'):
