@@ -71,6 +71,6 @@ async def fetch_tiktok_data(url: str):
                 return {
                     "type": "video",
                     "media": [video_path],
-                    "audio": None, # For video we usually don't need audio separately
+                    "audio": audio_path,
                     "title": title
                 }

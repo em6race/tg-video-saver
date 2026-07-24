@@ -141,6 +141,20 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 if os.path.exists(video_path):
                     os.remove(video_path)
                     
+                # Send audio if available
+                if data.get("audio"):
+                    with open(data["audio"], 'rb') as audio_file:
+                        await update.message.reply_audio(
+                            audio=audio_file,
+                            title=data.get("title", "TikTok Audio"),
+                            performer="TikTok",
+                            write_timeout=60, 
+                            read_timeout=60, 
+                            pool_timeout=60
+                        )
+                    if os.path.exists(data["audio"]):
+                        os.remove(data["audio"])
+                    
         elif any(domain in url for domain in ["spotify.com", "spotify.link", "spotify:", "music.youtube.com", "soundcloud.com"]):
             # For Spotify, we fetch metadata first then search YT. 
             # For YT Music / SoundCloud, we pass the URL directly to yt-dlp.
