@@ -19,6 +19,7 @@ def _download_video_sync(url: str) -> str:
         'quiet': True,
         'no_warnings': True,
         'merge_output_format': 'mp4',
+        'postprocessor_args': ['-threads', '1'],
     }
     
     with YoutubeDL(ydl_opts) as ydl:
@@ -54,6 +55,7 @@ def _download_audio_sync(query: str) -> dict:
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        'postprocessor_args': ['-threads', '1'],
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
