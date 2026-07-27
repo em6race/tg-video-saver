@@ -203,7 +203,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             # For YT Music / SoundCloud, we pass the URL directly to yt-dlp.
             if "spotify" in url:
                 track_info = await get_spotify_track_info(url)
-                search_query = f"ytsearch1:{track_info['search_query']} audio"
+                search_query = f"ytsearch1:{track_info['search_query']} Topic"
                 audio_result = await download_audio(search_query)
             else:
                 audio_result = await download_audio(url)
