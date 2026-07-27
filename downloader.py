@@ -44,12 +44,45 @@ async def download_video(url: str) -> str:
     """
     return await asyncio.to_thread(_download_video_sync, url)
 
+import platform
+import subprocess
+import time
+import signal
+
+def convert_to_mp3_throttled(input_path: str, output_path: str):
+    cmd = ["ffmpeg", "-y", "-i", input_path, "-threads", "1", "-q:a", "2", output_path]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    if platform.system() != "Windows":
+        while proc.poll() is None:
+            try:
+                proc.send_signal(signal.SIGSTOP)
+                time.sleep(0.08)
+                proc.send_signal(signal.SIGCONT)
+                time.sleep(0.02)
+            except Exception:
+                time.sleep(0.05)
+    else:
+        proc.wait()
+        
+    if proc.returncode != 0:
+        # If it fails (e.g. ffmpeg not found), just return the original file
+        return input_path
+    
+    # Delete original file
+    try:
+        os.remove(input_path)
+    except Exception:
+        pass
+        
+    return output_path
+
 def _download_audio_sync(query: str) -> dict:
     file_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOADS_DIR, f"{file_id}.%(ext)s")
     
     ydl_opts = {
-        'format': 'm4a/bestaudio/best',
+        'format': 'bestaudio/best',
         'outtmpl': output_template,
         'extractor_args': {'youtube': {'player_client': ['android']}},
         'quiet': True,
@@ -76,6 +109,10 @@ def _download_audio_sync(query: str) -> dict:
         files = glob.glob(os.path.join(DOWNLOADS_DIR, f"{file_id}.*"))
         if files:
             filename = files[0]
+            
+    # Convert to MP3 safely
+    mp3_path = os.path.join(DOWNLOADS_DIR, f"{file_id}.mp3")
+    final_path = convert_to_mp3_throttled(filename, mp3_path)
         
     thumbnail = None
     if info.get('thumbnails'):
@@ -86,7 +123,7 @@ def _download_audio_sync(query: str) -> dict:
     performer = info.get('artist') or info.get('uploader') or info.get('creator') or 'Unknown Artist'
         
     return {
-        'file_path': filename,
+        'file_path': final_path,
         'title': info.get('title', 'Unknown Title'),
         'performer': performer,
         'thumbnail_url': thumbnail
