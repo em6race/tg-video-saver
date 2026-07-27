@@ -5,8 +5,8 @@ import re
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
-from telegram import Update, BotCommand, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, BotCommand, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 from downloader import download_video, download_audio
 from tiktok_api import fetch_tiktok_data
@@ -104,17 +104,93 @@ async def clean_old_downloads():
         except Exception as e:
             logger.warning(f"Could not delete old file {file_path}: {e}")
 
+async def process_audio(target_message, context, url):
+    try:
+        if "spotify" in url:
+            track_info = await get_spotify_track_info(url)
+            search_query = f"ytsearch1:{track_info['search_query']} Topic"
+            audio_result = await download_audio(search_query)
+        else:
+            audio_result = await download_audio(url)
+            track_info = {
+                "title": audio_result["title"],
+                "performer": audio_result["performer"],
+                "thumbnail_url": audio_result["thumbnail_url"]
+            }
+            
+        file_path = audio_result["file_path"]
+        
+        thumb_path = None
+        if track_info.get("thumbnail_url"):
+            thumb_path = f"downloads/thumb_{int(time.time())}.jpg"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(track_info["thumbnail_url"]) as resp:
+                        if resp.status == 200:
+                            img_bytes = await resp.read()
+                            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                            img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                            img.save(thumb_path, "JPEG", quality=90)
+            except Exception as e:
+                logger.warning(f"Failed to download thumbnail: {e}")
+                thumb_path = None
+        
+        with open(file_path, 'rb') as audio_file:
+            thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
+            try:
+                await target_message.reply_audio(
+                    audio=audio_file,
+                    title=track_info["title"],
+                    performer=track_info["performer"],
+                    thumbnail=thumb_file,
+                    write_timeout=60,
+                    read_timeout=60,
+                    pool_timeout=60
+                )
+            finally:
+                if thumb_file:
+                    thumb_file.close()
+                    
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        if thumb_path and os.path.exists(thumb_path):
+            os.remove(thumb_path)
+            
+    except Exception as e:
+        logger.error(f"Error in process_audio: {e}")
+        await target_message.reply_text(f"❌ Сталася помилка при завантаженні аудіо.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
+
+async def process_video(target_message, context, url):
+    try:
+        file_path = await download_video(url)
+        with open(file_path, 'rb') as video_file:
+            try:
+                await target_message.reply_video(
+                    video=video_file,
+                    write_timeout=60,
+                    read_timeout=60,
+                    pool_timeout=60
+                )
+            except Exception as vid_e:
+                logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
+                video_file.seek(0)
+                await target_message.reply_document(
+                    document=video_file,
+                    write_timeout=60,
+                    read_timeout=60,
+                    pool_timeout=60
+                )
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception as e:
+        logger.error(f"Error in process_video: {e}")
+        await target_message.reply_text(f"❌ Сталася помилка при завантаженні відео.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
+
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     url = update.message.text
     
     # Run cleanup of old garbage files
     await clean_old_downloads()
-    
-    # Send a waiting message
-    status_msg = await update.message.reply_text("⏳ Завантажую, зачекайте...")
-    
-    import asyncio
-    typing_task = asyncio.create_task(send_typing_action(update.message.chat_id, context))
     
     try:
         supported_domains = [
@@ -135,158 +211,117 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await update.message.reply_text("Вибачте, але я поки що не вмію завантажувати цілі альбоми, плейлисти чи подкасти 😔\n\nБудь ласка, надішліть посилання на **окремий трек** (пісню), і я з радістю його завантажу! 🎵", parse_mode="Markdown")
             return
 
-        if "tiktok.com" in url:
-            data = await fetch_tiktok_data(url)
-            
-            if data["type"] == "slideshow":
-                media_group = []
-                opened_files = []
-                for i, photo_path in enumerate(data["media"]):
-                    f = open(photo_path, 'rb')
-                    opened_files.append(f)
-                    media_group.append(InputMediaPhoto(f))
-                
-                try:
-                    await update.message.reply_media_group(media=media_group, write_timeout=60, read_timeout=60, pool_timeout=60)
-                finally:
-                    for f in opened_files:
-                        f.close()
-                    for photo_path in data["media"]:
-                        if os.path.exists(photo_path):
-                            os.remove(photo_path)
-                
-                # Send audio if available
-                if data.get("audio"):
-                    with open(data["audio"], 'rb') as audio_file:
-                        await update.message.reply_audio(audio=audio_file, write_timeout=60, read_timeout=60, pool_timeout=60)
-                    if os.path.exists(data["audio"]):
-                        os.remove(data["audio"])
-            else:
-                # Normal video from TikTok API
-                video_path = data["media"][0]
-                with open(video_path, 'rb') as video_file:
-                    try:
-                        await update.message.reply_video(
-                            video=video_file,
-                            write_timeout=60,
-                            read_timeout=60,
-                            pool_timeout=60
-                        )
-                    except Exception as vid_e:
-                        logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
-                        video_file.seek(0)
-                        await update.message.reply_document(
-                            document=video_file,
-                            write_timeout=60,
-                            read_timeout=60,
-                            pool_timeout=60
-                        )
-                if os.path.exists(video_path):
-                    os.remove(video_path)
-                    
-                # Send audio if available
-                if data.get("audio"):
-                    with open(data["audio"], 'rb') as audio_file:
-                        await update.message.reply_audio(
-                            audio=audio_file,
-                            title=data.get("title", "TikTok Audio"),
-                            performer="TikTok",
-                            write_timeout=60, 
-                            read_timeout=60, 
-                            pool_timeout=60
-                        )
-                    if os.path.exists(data["audio"]):
-                        os.remove(data["audio"])
-                    
-        elif any(domain in url for domain in ["spotify.com", "spotify.link", "spotify:", "music.youtube.com", "soundcloud.com"]):
-            # For Spotify, we fetch metadata first then search YT. 
-            # For YT Music / SoundCloud, we pass the URL directly to yt-dlp.
-            if "spotify" in url:
-                track_info = await get_spotify_track_info(url)
-                search_query = f"ytsearch1:{track_info['search_query']} Topic"
-                audio_result = await download_audio(search_query)
-            else:
-                audio_result = await download_audio(url)
-                track_info = {
-                    "title": audio_result["title"],
-                    "performer": audio_result["performer"],
-                    "thumbnail_url": audio_result["thumbnail_url"]
-                }
-                
-            file_path = audio_result["file_path"]
-            
-            thumb_path = None
-            if track_info.get("thumbnail_url"):
-                thumb_path = f"downloads/thumb_{int(time.time())}.jpg"
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(track_info["thumbnail_url"]) as resp:
-                            if resp.status == 200:
-                                img_bytes = await resp.read()
-                                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-                                img.thumbnail((320, 320), Image.Resampling.LANCZOS)
-                                img.save(thumb_path, "JPEG", quality=90)
-                except Exception as e:
-                    logger.warning(f"Failed to download thumbnail: {e}")
-                    thumb_path = None
-            
-            with open(file_path, 'rb') as audio_file:
-                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
-                try:
-                    await update.message.reply_audio(
-                        audio=audio_file,
-                        title=track_info["title"],
-                        performer=track_info["performer"],
-                        thumbnail=thumb_file,
-                        write_timeout=60,
-                        read_timeout=60,
-                        pool_timeout=60
-                    )
-                finally:
-                    if thumb_file:
-                        thumb_file.close()
-                        
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            if thumb_path and os.path.exists(thumb_path):
-                os.remove(thumb_path)
-                
-        else:
-            # Download video using yt-dlp for non-TikTok links
-            file_path = await download_video(url)
-            
-            # Send video
-            with open(file_path, 'rb') as video_file:
-                try:
-                    await update.message.reply_video(
-                        video=video_file,
-                        write_timeout=60,
-                        read_timeout=60,
-                        pool_timeout=60
-                    )
-                except Exception as vid_e:
-                    logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
-                    video_file.seek(0)
-                    await update.message.reply_document(
-                        document=video_file,
-                        write_timeout=60,
-                        read_timeout=60,
-                        pool_timeout=60
-                    )
-            
-            # Clean up the file after sending
-            if os.path.exists(file_path):
-                os.remove(file_path)
+        if any(domain in url.lower() for domain in ["youtube.com", "youtu.be"]):
+            keyboard = [
+                [
+                    InlineKeyboardButton("🎬 Відео", callback_data="yt_video"),
+                    InlineKeyboardButton("🎵 Аудіо", callback_data="yt_audio"),
+                ],
+                [
+                    InlineKeyboardButton("🎬+🎵 Відео та Аудіо", callback_data="yt_both")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text("Оберіть, що саме ви хочете завантажити з YouTube:", reply_markup=reply_markup, reply_to_message_id=update.message.message_id)
+            return
+
+        # Send a waiting message for non-youtube links
+        status_msg = await update.message.reply_text("⏳ Завантажую, зачекайте...")
+        import asyncio
+        typing_task = asyncio.create_task(send_typing_action(update.message.chat_id, context))
         
+        try:
+            if "tiktok.com" in url:
+                data = await fetch_tiktok_data(url)
+                
+                if data["type"] == "slideshow":
+                    media_group = []
+                    opened_files = []
+                    for i, photo_path in enumerate(data["media"]):
+                        f = open(photo_path, 'rb')
+                        opened_files.append(f)
+                        media_group.append(InputMediaPhoto(f))
+                    
+                    try:
+                        await update.message.reply_media_group(media=media_group, write_timeout=60, read_timeout=60, pool_timeout=60)
+                    finally:
+                        for f in opened_files:
+                            f.close()
+                        for photo_path in data["media"]:
+                            if os.path.exists(photo_path):
+                                os.remove(photo_path)
+                    
+                    if data.get("audio"):
+                        with open(data["audio"], 'rb') as audio_file:
+                            await update.message.reply_audio(audio=audio_file, write_timeout=60, read_timeout=60, pool_timeout=60)
+                        if os.path.exists(data["audio"]):
+                            os.remove(data["audio"])
+                else:
+                    video_path = data["media"][0]
+                    with open(video_path, 'rb') as video_file:
+                        try:
+                            await update.message.reply_video(video=video_file, write_timeout=60, read_timeout=60, pool_timeout=60)
+                        except Exception as vid_e:
+                            logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
+                            video_file.seek(0)
+                            await update.message.reply_document(document=video_file, write_timeout=60, read_timeout=60, pool_timeout=60)
+                    if os.path.exists(video_path):
+                        os.remove(video_path)
+                        
+                    if data.get("audio"):
+                        with open(data["audio"], 'rb') as audio_file:
+                            await update.message.reply_audio(
+                                audio=audio_file,
+                                title=data.get("title", "TikTok Audio"),
+                                performer="TikTok",
+                                write_timeout=60, read_timeout=60, pool_timeout=60
+                            )
+                        if os.path.exists(data["audio"]):
+                            os.remove(data["audio"])
+            elif any(domain in url for domain in ["spotify.com", "spotify.link", "spotify:", "music.youtube.com", "soundcloud.com"]):
+                await process_audio(update.message, context, url)
+            else:
+                await process_video(update.message, context, url)
+        finally:
+            typing_task.cancel()
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+                
     except Exception as e:
         logger.error(f"Error handling URL: {e}")
         await update.message.reply_text(f"❌ Сталася помилка при завантаженні відео.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
+
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    
+    if not query.message.reply_to_message or not query.message.reply_to_message.text:
+        await query.edit_message_text(text="❌ Помилка: не вдалося знайти оригінальне посилання. Відправте його ще раз.")
+        return
         
+    url = query.message.reply_to_message.text
+    choice = query.data
+    
+    await query.edit_message_text(text="⏳ Завантажую, зачекайте...")
+    
+    import asyncio
+    typing_task = asyncio.create_task(send_typing_action(query.message.chat_id, context))
+    
+    try:
+        if choice == "yt_video":
+            await process_video(query.message.reply_to_message, context, url)
+        elif choice == "yt_audio":
+            await process_audio(query.message.reply_to_message, context, url)
+        elif choice == "yt_both":
+            await process_video(query.message.reply_to_message, context, url)
+            await process_audio(query.message.reply_to_message, context, url)
     finally:
         typing_task.cancel()
         try:
-            await status_msg.delete()
-        except Exception:
+            await query.message.delete()
+        except:
             pass
 
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -313,21 +348,18 @@ async def post_init(application: Application) -> None:
     ]
     await application.bot.set_my_commands(commands)
     
-    # Send startup message to admin
     if ADMIN_ID:
         try:
             await application.bot.send_message(chat_id=int(ADMIN_ID), text="Бот успішно запущений і готовий до роботи! ✅")
         except Exception as e:
             logger.warning(f"Could not send startup message to admin: {e}")
             
-    # Start auto-update task
     import asyncio
     asyncio.create_task(auto_update(application))
 
 def main() -> None:
     print("Starting bot...")
     
-    # Clean up downloads directory on startup
     downloads_dir = "downloads"
     if os.path.exists(downloads_dir):
         import shutil
@@ -337,7 +369,6 @@ def main() -> None:
             logger.warning(f"Failed to clean up downloads directory on startup: {e}")
     os.makedirs(downloads_dir, exist_ok=True)
     
-    # Start the dummy web server in a background thread for Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     application = Application.builder().token(TOKEN).post_init(post_init).build()
@@ -346,9 +377,9 @@ def main() -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("restart", restart_command))
     
-    # Regex to match URLs
     url_pattern = re.compile(r'https?://[^\s]+')
     application.add_handler(MessageHandler(filters.Regex(url_pattern), handle_url))
+    application.add_handler(CallbackQueryHandler(handle_callback_query))
     
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown))
 
