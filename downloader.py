@@ -49,14 +49,8 @@ def _download_audio_sync(query: str) -> dict:
     output_template = os.path.join(DOWNLOADS_DIR, f"{file_id}.%(ext)s")
     
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'm4a/bestaudio/best',
         'outtmpl': output_template,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'postprocessor_args': ['-threads', '1'],
         'extractor_args': {'youtube': {'player_client': ['android']}},
         'quiet': True,
         'no_warnings': True,
@@ -66,12 +60,14 @@ def _download_audio_sync(query: str) -> dict:
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(query, download=True)
+            filename = ydl.prepare_filename(info)
     except Exception as e:
         if "ytsearch" in query:
             # Fallback to soundcloud search if youtube fails
             fallback_query = query.replace("ytsearch", "scsearch")
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(fallback_query, download=True)
+                filename = ydl.prepare_filename(info)
         else:
             raise e
         
@@ -84,7 +80,7 @@ def _download_audio_sync(query: str) -> dict:
     performer = info.get('artist') or info.get('uploader') or info.get('creator') or 'Unknown Artist'
         
     return {
-        'file_path': os.path.join(DOWNLOADS_DIR, f"{file_id}.mp3"),
+        'file_path': filename,
         'title': info.get('title', 'Unknown Title'),
         'performer': performer,
         'thumbnail_url': thumbnail
