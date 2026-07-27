@@ -98,17 +98,28 @@ def _download_audio_sync(query: str) -> dict:
             filename = ydl.prepare_filename(info)
     except Exception as e:
         if "ytsearch" in query:
+            filename = None
             # If we used "Topic", fallback to youtube without "Topic" first
             if " Topic" in query and "No results found" in str(e):
                 fallback_query = query.replace(" Topic", "")
-            else:
-                fallback_query = query.replace("ytsearch", "scsearch").replace(" Topic", "")
-                
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(fallback_query, download=True)
-                if 'entries' in info and len(info['entries']) == 0:
-                    raise Exception("No results found on fallback search")
-                filename = ydl.prepare_filename(info)
+                try:
+                    with YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(fallback_query, download=True)
+                        if 'entries' in info and len(info['entries']) == 0:
+                            raise Exception("No results")
+                        filename = ydl.prepare_filename(info)
+                except Exception:
+                    pass
+            
+            # If we still don't have a filename (either it wasn't a Topic search, or the Topic fallback failed)
+            # We fallback to SoundCloud
+            if not filename:
+                sc_query = query.replace("ytsearch", "scsearch").replace(" Topic", "")
+                with YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(sc_query, download=True)
+                    if 'entries' in info and len(info['entries']) == 0:
+                        raise Exception("No results found on soundcloud")
+                    filename = ydl.prepare_filename(info)
         else:
             raise e
             
