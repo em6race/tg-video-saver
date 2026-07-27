@@ -1,5 +1,6 @@
 import aiohttp
 import re
+import html
 
 async def get_spotify_track_info(url: str) -> dict:
     headers = {
@@ -16,17 +17,17 @@ async def get_spotify_track_info(url: str) -> dict:
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url) as resp:
-                html = await resp.text()
+                html_content = await resp.text()
                 
-                title_m = re.search(r'<meta property="og:title" content="(.*?)"', html)
-                desc_m = re.search(r'<meta property="og:description" content="(.*?)"', html)
-                img_m = re.search(r'<meta property="og:image" content="(.*?)"', html)
+                title_m = re.search(r'<meta property="og:title" content="(.*?)"', html_content)
+                desc_m = re.search(r'<meta property="og:description" content="(.*?)"', html_content)
+                img_m = re.search(r'<meta property="og:image" content="(.*?)"', html_content)
                 
                 if title_m:
-                    result["title"] = title_m.group(1)
+                    result["title"] = html.unescape(title_m.group(1))
                     
                 if desc_m:
-                    desc = desc_m.group(1)
+                    desc = html.unescape(desc_m.group(1))
                     # Split by '·' (which is often represented as \xb7 or similar)
                     parts = desc.split('·')
                     if len(parts) > 0:
