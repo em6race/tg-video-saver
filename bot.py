@@ -304,6 +304,16 @@ async def post_init(application: Application) -> None:
 def main() -> None:
     print("Starting bot...")
     
+    # Clean up downloads directory on startup
+    downloads_dir = "downloads"
+    if os.path.exists(downloads_dir):
+        import shutil
+        try:
+            shutil.rmtree(downloads_dir)
+        except Exception as e:
+            logger.warning(f"Failed to clean up downloads directory on startup: {e}")
+    os.makedirs(downloads_dir, exist_ok=True)
+    
     # Start the dummy web server in a background thread for Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
