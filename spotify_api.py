@@ -35,7 +35,9 @@ async def get_spotify_track_info(url: str) -> dict:
                 if img_m:
                     result["thumbnail_url"] = img_m.group(1)
                     
-                result["search_query"] = f'{result["title"]} {result["performer"]}'
+                title_clean = re.sub(r'\(feat\..*?\)', '', result["title"], flags=re.IGNORECASE).strip()
+                performer_clean = result["performer"].split(',')[0].strip()
+                result["search_query"] = f'{title_clean} {performer_clean}'
     except Exception as e:
         print(f"Error extracting spotify info: {e}")
         
