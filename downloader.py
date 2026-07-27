@@ -57,9 +57,9 @@ def convert_to_mp3_throttled(input_path: str, output_path: str):
         while proc.poll() is None:
             try:
                 proc.send_signal(signal.SIGSTOP)
-                time.sleep(0.08)
+                time.sleep(0.15)
                 proc.send_signal(signal.SIGCONT)
-                time.sleep(0.02)
+                time.sleep(0.01)
             except Exception:
                 time.sleep(0.05)
     else:
