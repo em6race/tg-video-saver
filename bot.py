@@ -84,8 +84,31 @@ async def send_typing_action(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -
             import asyncio
             await asyncio.sleep(4)
 
+async def clean_old_downloads():
+    import time
+    import shutil
+    downloads_dir = "downloads"
+    if not os.path.exists(downloads_dir):
+        os.makedirs(downloads_dir, exist_ok=True)
+        return
+        
+    current_time = time.time()
+    for filename in os.listdir(downloads_dir):
+        file_path = os.path.join(downloads_dir, filename)
+        try:
+            # Delete files older than 1 hour (3600 seconds)
+            if os.path.isfile(file_path) and current_time - os.path.getmtime(file_path) > 3600:
+                os.remove(file_path)
+            elif os.path.isdir(file_path) and current_time - os.path.getmtime(file_path) > 3600:
+                shutil.rmtree(file_path)
+        except Exception as e:
+            logger.warning(f"Could not delete old file {file_path}: {e}")
+
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     url = update.message.text
+    
+    # Run cleanup of old garbage files
+    await clean_old_downloads()
     
     # Send a waiting message
     status_msg = await update.message.reply_text("⏳ Завантажую, зачекайте...")
