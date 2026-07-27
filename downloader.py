@@ -70,6 +70,12 @@ def _download_audio_sync(query: str) -> dict:
                 filename = ydl.prepare_filename(info)
         else:
             raise e
+            
+    if not os.path.exists(filename):
+        import glob
+        files = glob.glob(os.path.join(DOWNLOADS_DIR, f"{file_id}.*"))
+        if files:
+            filename = files[0]
         
     thumbnail = None
     if info.get('thumbnails'):
