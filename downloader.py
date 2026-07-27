@@ -64,7 +64,7 @@ def _download_audio_sync(query: str) -> dict:
     except Exception as e:
         if "ytsearch" in query:
             # Fallback to soundcloud search if youtube fails
-            fallback_query = query.replace("ytsearch", "scsearch")
+            fallback_query = query.replace("ytsearch", "scsearch").replace(" Topic", "")
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(fallback_query, download=True)
                 filename = ydl.prepare_filename(info)
