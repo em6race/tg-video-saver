@@ -19,6 +19,14 @@ async def fetch_tiktok_data(url: str):
     }
     
     async with aiohttp.ClientSession(headers=headers) as session:
+        # Automatically resolve shortlinks to full URLs to prevent tikwm parsing errors
+        if "vt.tiktok.com" in url or "vm.tiktok.com" in url or "t.tiktok.com" in url:
+            try:
+                async with session.head(url, allow_redirects=True, timeout=10) as head_resp:
+                    url = str(head_resp.url).split("?")[0]
+            except Exception:
+                pass
+
         async with session.get(api_url, params={"url": url}) as resp:
             data = await resp.json()
             

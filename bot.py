@@ -232,52 +232,57 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         
         try:
             if "tiktok.com" in url:
-                data = await fetch_tiktok_data(url)
-                
-                if data["type"] == "slideshow":
-                    media_group = []
-                    opened_files = []
-                    for i, photo_path in enumerate(data["media"]):
-                        f = open(photo_path, 'rb')
-                        opened_files.append(f)
-                        media_group.append(InputMediaPhoto(f))
+                try:
+                    data = await fetch_tiktok_data(url)
                     
-                    try:
-                        await update.message.reply_media_group(media=media_group, write_timeout=60, read_timeout=60, pool_timeout=60)
-                    finally:
-                        for f in opened_files:
-                            f.close()
-                        for photo_path in data["media"]:
-                            if os.path.exists(photo_path):
-                                os.remove(photo_path)
-                    
-                    if data.get("audio"):
-                        with open(data["audio"], 'rb') as audio_file:
-                            await update.message.reply_audio(audio=audio_file, write_timeout=60, read_timeout=60, pool_timeout=60)
-                        if os.path.exists(data["audio"]):
-                            os.remove(data["audio"])
-                else:
-                    video_path = data["media"][0]
-                    with open(video_path, 'rb') as video_file:
-                        try:
-                            await update.message.reply_video(video=video_file, write_timeout=60, read_timeout=60, pool_timeout=60)
-                        except Exception as vid_e:
-                            logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
-                            video_file.seek(0)
-                            await update.message.reply_document(document=video_file, write_timeout=60, read_timeout=60, pool_timeout=60)
-                    if os.path.exists(video_path):
-                        os.remove(video_path)
+                    if data["type"] == "slideshow":
+                        media_group = []
+                        opened_files = []
+                        for i, photo_path in enumerate(data["media"]):
+                            f = open(photo_path, 'rb')
+                            opened_files.append(f)
+                            media_group.append(InputMediaPhoto(f))
                         
-                    if data.get("audio"):
-                        with open(data["audio"], 'rb') as audio_file:
-                            await update.message.reply_audio(
-                                audio=audio_file,
-                                title=data.get("title", "TikTok Audio"),
-                                performer="TikTok",
-                                write_timeout=60, read_timeout=60, pool_timeout=60
-                            )
-                        if os.path.exists(data["audio"]):
-                            os.remove(data["audio"])
+                        try:
+                            await update.message.reply_media_group(media=media_group, write_timeout=60, read_timeout=60, pool_timeout=60)
+                        finally:
+                            for f in opened_files:
+                                f.close()
+                            for photo_path in data["media"]:
+                                if os.path.exists(photo_path):
+                                    os.remove(photo_path)
+                        
+                        if data.get("audio"):
+                            with open(data["audio"], 'rb') as audio_file:
+                                await update.message.reply_audio(audio=audio_file, write_timeout=60, read_timeout=60, pool_timeout=60)
+                            if os.path.exists(data["audio"]):
+                                os.remove(data["audio"])
+                    else:
+                        video_path = data["media"][0]
+                        with open(video_path, 'rb') as video_file:
+                            try:
+                                await update.message.reply_video(video=video_file, write_timeout=60, read_timeout=60, pool_timeout=60)
+                            except Exception as vid_e:
+                                logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
+                                video_file.seek(0)
+                                await update.message.reply_document(document=video_file, write_timeout=60, read_timeout=60, pool_timeout=60)
+                        if os.path.exists(video_path):
+                            os.remove(video_path)
+                            
+                        if data.get("audio"):
+                            with open(data["audio"], 'rb') as audio_file:
+                                await update.message.reply_audio(
+                                    audio=audio_file,
+                                    title=data.get("title", "TikTok Audio"),
+                                    performer="TikTok",
+                                    write_timeout=60, read_timeout=60, pool_timeout=60
+                                )
+                            if os.path.exists(data["audio"]):
+                                os.remove(data["audio"])
+                except Exception as tk_err:
+                    logger.warning(f"TikTok API failed ({tk_err}). Falling back to yt-dlp...")
+                    await process_video(update.message, context, url)
+                    
             elif any(domain in url for domain in ["spotify.com", "spotify.link", "spotify:", "music.youtube.com", "soundcloud.com"]):
                 await process_audio(update.message, context, url)
             else:
