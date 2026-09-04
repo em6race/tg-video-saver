@@ -49,40 +49,12 @@ import subprocess
 import time
 import signal
 
-def convert_to_mp3_throttled(input_path: str, output_path: str):
-    cmd = ["ffmpeg", "-y", "-i", input_path, "-threads", "1", "-q:a", "2", output_path]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    if platform.system() != "Windows":
-        while proc.poll() is None:
-            try:
-                proc.send_signal(signal.SIGSTOP)
-                time.sleep(0.15)
-                proc.send_signal(signal.SIGCONT)
-                time.sleep(0.01)
-            except Exception:
-                time.sleep(0.05)
-    else:
-        proc.wait()
-        
-    if proc.returncode != 0:
-        # If it fails (e.g. ffmpeg not found), just return the original file
-        return input_path
-    
-    # Delete original file
-    try:
-        os.remove(input_path)
-    except Exception:
-        pass
-        
-    return output_path
-
 def _download_audio_sync(query: str) -> dict:
     file_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOADS_DIR, f"{file_id}.%(ext)s")
     
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'm4a/bestaudio/best',
         'outtmpl': output_template,
         'extractor_args': {'youtube': {'player_client': ['android']}},
         'quiet': True,
@@ -133,9 +105,7 @@ def _download_audio_sync(query: str) -> dict:
         if files:
             filename = files[0]
             
-    # Convert to MP3 safely
-    mp3_path = os.path.join(DOWNLOADS_DIR, f"{file_id}.mp3")
-    final_path = convert_to_mp3_throttled(filename, mp3_path)
+    final_path = filename
         
     thumbnail = None
     if info.get('thumbnails'):
