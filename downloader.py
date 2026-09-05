@@ -60,7 +60,7 @@ def _download_audio_sync(query: str) -> dict:
     output_template = os.path.join(DOWNLOADS_DIR, f"{file_id}.%(ext)s")
     
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[ext=mp3]/bestaudio/best',
         'outtmpl': output_template,
         'extractor_args': {'youtube': {'player_client': ['android']}},
         'quiet': True,
