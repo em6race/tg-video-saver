@@ -21,7 +21,13 @@ def _download_video_sync(url: str) -> str:
         'merge_output_format': 'mp4',
         'postprocessor_args': ['-threads', '1'],
         'extractor_args': {'youtube': {'player_client': ['android']}},
+        'concurrent_fragment_downloads': 10,
     }
+    
+    import shutil
+    if shutil.which("aria2c"):
+        ydl_opts['external_downloader'] = 'aria2c'
+        ydl_opts['external_downloader_args'] = ['-x', '10', '-s', '10', '-k', '1M']
     
     with YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
@@ -66,7 +72,13 @@ def _download_audio_sync(query: str) -> dict:
             'preferredquality': '192',
         }],
         'postprocessor_args': ['-threads', '1'],
+        'concurrent_fragment_downloads': 10,
     }
+
+    import shutil
+    if shutil.which("aria2c"):
+        ydl_opts['external_downloader'] = 'aria2c'
+        ydl_opts['external_downloader_args'] = ['-x', '10', '-s', '10', '-k', '1M']
     
     try:
         print(f"[DEBUG] Searching YouTube (primary): {query}")
