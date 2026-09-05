@@ -11,6 +11,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from downloader import download_video, download_audio
 from tiktok_api import fetch_tiktok_data
 from spotify_api import get_spotify_track_info
+from database import get_cached_file_id, set_cached_file_id
 import pytz
 from datetime import datetime
 import subprocess
@@ -105,6 +106,16 @@ async def clean_old_downloads():
             logger.warning(f"Could not delete old file {file_path}: {e}")
 
 async def process_audio(target_message, context, url):
+    # Check cache first
+    cached_id = get_cached_file_id(url, "audio")
+    if cached_id:
+        try:
+            await target_message.reply_audio(audio=cached_id)
+            logger.info(f"Served audio from cache for {url}")
+            return
+        except Exception as e:
+            logger.warning(f"Failed to use cached audio for {url}, redownloading: {e}")
+
     try:
         if "spotify" in url:
             track_info = await get_spotify_track_info(url)
@@ -138,7 +149,7 @@ async def process_audio(target_message, context, url):
         with open(file_path, 'rb') as audio_file:
             thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
             try:
-                await target_message.reply_audio(
+                msg = await target_message.reply_audio(
                     audio=audio_file,
                     title=track_info["title"],
                     performer=track_info["performer"],
@@ -147,6 +158,8 @@ async def process_audio(target_message, context, url):
                     read_timeout=60,
                     pool_timeout=60
                 )
+                if msg and msg.audio:
+                    set_cached_file_id(url, "audio", msg.audio.file_id)
             finally:
                 if thumb_file:
                     thumb_file.close()
@@ -160,31 +173,46 @@ async def process_audio(target_message, context, url):
         logger.error(f"Error in process_audio: {e}")
         await target_message.reply_text(f"❌ Сталася помилка при завантаженні аудіо.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
 
+
 async def process_video(target_message, context, url):
+    cached_id = get_cached_file_id(url, "video")
+    if cached_id:
+        try:
+            await target_message.reply_video(video=cached_id)
+            logger.info(f"Served video from cache for {url}")
+            return
+        except Exception as e:
+            logger.warning(f"Failed to use cached video for {url}, redownloading: {e}")
+
     try:
         file_path = await download_video(url)
         with open(file_path, 'rb') as video_file:
             try:
-                await target_message.reply_video(
+                msg = await target_message.reply_video(
                     video=video_file,
                     write_timeout=60,
                     read_timeout=60,
                     pool_timeout=60
                 )
+                if msg and msg.video:
+                    set_cached_file_id(url, "video", msg.video.file_id)
             except Exception as vid_e:
                 logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
                 video_file.seek(0)
-                await target_message.reply_document(
+                msg = await target_message.reply_document(
                     document=video_file,
                     write_timeout=60,
                     read_timeout=60,
                     pool_timeout=60
                 )
+                if msg and msg.document:
+                    set_cached_file_id(url, "video", msg.document.file_id)
         if os.path.exists(file_path):
             os.remove(file_path)
     except Exception as e:
         logger.error(f"Error in process_video: {e}")
         await target_message.reply_text(f"❌ Сталася помилка при завантаженні відео.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
+
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     url = update.message.text
