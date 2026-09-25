@@ -1,7 +1,15 @@
 import sqlite3
-import aiosqlite
 import uuid
+import logging
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
+
+try:
+    import aiosqlite
+except ImportError:
+    aiosqlite = None
+    logger.warning("aiosqlite package not found. Async operations will fallback to sqlite3.")
 
 DB_PATH = "cache.db"
 
@@ -66,7 +74,27 @@ def init_db():
 
 # --- АСИНХРОННИЙ КЕШ ФАЙЛІВ ---
 
+def _get_cached_file_id_sync(url: str, type: str) -> str:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_id FROM file_cache WHERE url=? AND type=?", (url, type))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+def _set_cached_file_id_sync(url: str, type: str, file_id: str):
+    if not file_id:
+        return
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO file_cache (url, type, file_id)
+            VALUES (?, ?, ?)
+        ''', (url, type, file_id))
+        conn.commit()
+
 async def get_cached_file_id(url: str, type: str) -> str:
+    if aiosqlite is None:
+        return await asyncio.to_thread(_get_cached_file_id_sync, url, type)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT file_id FROM file_cache WHERE url=? AND type=?", (url, type)) as cursor:
             row = await cursor.fetchone()
@@ -75,6 +103,8 @@ async def get_cached_file_id(url: str, type: str) -> str:
 async def set_cached_file_id(url: str, type: str, file_id: str):
     if not file_id:
         return
+    if aiosqlite is None:
+        return await asyncio.to_thread(_set_cached_file_id_sync, url, type, file_id)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             INSERT OR REPLACE INTO file_cache (url, type, file_id)
@@ -85,6 +115,8 @@ async def set_cached_file_id(url: str, type: str, file_id: str):
 # --- АСИНХРОННИЙ ПРИВАТНИЙ ДОСТУП ТА ІНВАЙТИ ---
 
 async def is_admin(user_id: int, admin_id_env: str = None) -> bool:
+    if aiosqlite is None:
+        return await asyncio.to_thread(is_admin_sync, user_id, admin_id_env)
     if admin_id_env and str(user_id) == str(admin_id_env).strip():
         return True
     async with aiosqlite.connect(DB_PATH) as db:
@@ -128,6 +160,8 @@ def is_admin_sync(user_id: int, admin_id_env: str = None) -> bool:
     return False
 
 async def is_user_allowed(user_id: int, admin_id_env: str = None) -> bool:
+    if aiosqlite is None:
+        return await asyncio.to_thread(is_user_allowed_sync, user_id, admin_id_env)
     if await is_admin(user_id, admin_id_env):
         return True
     async with aiosqlite.connect(DB_PATH) as db:
@@ -210,6 +244,8 @@ async def get_allowed_users_list() -> list:
 # --- АСИНХРОННІ ПІДПИСКИ НА ПОВІТРЯНІ ТРИВОГИ ---
 
 async def set_awaiting_location(user_id: int, chat_id: int, awaiting: bool = True):
+    if aiosqlite is None:
+        return await asyncio.to_thread(set_awaiting_location_sync, user_id, chat_id, awaiting)
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT user_id FROM alert_subscriptions WHERE user_id=?", (int(user_id),)) as cursor:
@@ -244,6 +280,8 @@ def set_awaiting_location_sync(user_id: int, chat_id: int, awaiting: bool = True
         conn.commit()
 
 async def save_user_location(user_id: int, chat_id: int, oblast: str, raion: str, locality: str, lat: float, lon: float):
+    if aiosqlite is None:
+        return await asyncio.to_thread(save_user_location_sync, user_id, chat_id, oblast, raion, locality, lat, lon)
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
@@ -285,6 +323,8 @@ def save_user_location_sync(user_id: int, chat_id: int, oblast: str, raion: str,
         conn.commit()
 
 async def disable_user_alerts(user_id: int):
+    if aiosqlite is None:
+        return await asyncio.to_thread(disable_user_alerts_sync, user_id)
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
@@ -329,6 +369,8 @@ async def set_user_last_alert_msg_id(user_id: int, msg_id: int):
         await db.commit()
 
 async def get_user_subscription(user_id: int) -> dict:
+    if aiosqlite is None:
+        return await asyncio.to_thread(get_user_subscription_sync, user_id)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute('''
             SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id
