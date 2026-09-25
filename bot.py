@@ -370,6 +370,7 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
     lon = geo.get("lon")
 
     save_user_location(user_id, chat_id, oblast, raion, locality, lat, lon)
+    set_awaiting_location(user_id, chat_id, False)
 
     loc_parts = [p for p in [locality, raion, oblast] if p]
     unique_loc = []
@@ -1071,6 +1072,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         chat_id = query.message.chat_id
         pending_geo = context.user_data.get("pending_geo")
+        set_awaiting_location(user_id, chat_id, False)
         if pending_geo:
             try:
                 await query.message.delete()
@@ -1079,13 +1081,28 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await save_and_confirm_location(update, context, user_id, chat_id, pending_geo)
             context.user_data.pop("pending_geo", None)
         else:
-            await query.edit_message_text("⚠️ Термін дії запиту минув. Будь ласка, введіть назву міста ще раз через /alerts.")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Термін дії запиту минув. Будь ласка, введіть назву міста ще раз через /alerts.",
+                reply_markup=ReplyKeyboardRemove()
+            )
         return
 
     elif choice == "cancel_pending_loc":
         await query.answer()
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
         context.user_data.pop("pending_geo", None)
-        await query.edit_message_text("❌ Встановлення локації скасовано. Введіть іншу назву міста в чат або оберіть зі списку в /alerts.")
+        set_awaiting_location(user_id, chat_id, False)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Встановлення локації скасовано.",
+            reply_markup=ReplyKeyboardRemove()
+        )
         return
 
     elif choice.startswith("set_oblast:"):
@@ -1095,11 +1112,39 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         chat_id = query.message.chat_id
 
         save_user_location(user_id, chat_id, oblast_name, "", "", None, None)
-        await query.edit_message_text(
-            f"✅ **Область збережено:** {oblast_name}!\n\n"
-            "Тепер ви будете оперативно отримувати сповіщення про зміну рівнів тривог (🔴/🟡) та відбої.",
+        set_awaiting_location(user_id, chat_id, False)
+
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ **Область збережено:** {oblast_name}!\n\n"
+                 "Тепер ви будете оперативно отримувати сповіщення про зміну рівнів тривог (🔴/🟡) та відбої.",
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode="Markdown"
         )
+
+        try:
+            alerts_data, threats_data = await fetch_neptun_data()
+            sub = get_user_subscription(user_id)
+            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+            _user_last_alert_state[user_id] = current_state["level"]
+            _user_last_threat_signature[user_id] = make_threat_signature(current_state)
+
+            report = format_alert_message(sub, current_state, is_manual_check=True)
+            sent_status_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"📊 **Поточна ситуація на цей момент:**\n\n{report}",
+                reply_markup=get_alert_inline_keyboard(),
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+            set_user_last_alert_msg_id(user_id, sent_status_msg.message_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch initial alert state after set_oblast: {e}")
         return
 
     # 2. Вибір формату YouTube
