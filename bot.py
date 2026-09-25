@@ -505,18 +505,8 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "• `/map` — переглянути карту тривог\n\n"
         "📍 **Як встановити або оновити вашу локацію:**\n"
         "1️⃣ **Просто напишіть у цей чат назву вашого міста чи села** (наприклад: `Київ`, `Ірпінь`, `Полтава`)\n"
-        "2️⃣ Або натисніть кнопку **«📍 Надіслати мою геопозицію»** нижче\n"
-        "3️⃣ Або оберіть область зі списку кнопок нижче:"
-    )
-
-    # Кнопка відправки геопозиції у Reply-клавіатурі
-    reply_kb = ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("📍 Надіслати мою геопозицію", request_location=True)],
-            [KeyboardButton("❌ Скасувати")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
+        "2️⃣ **Оберіть область зі списку** (кнопка «🗺️ Обрати область вручну» нижче)\n"
+        "3️⃣ **Або надішліть GPS-координати** за допомогою кнопки «📍 Надіслати мою геопозицію» внизу екрана"
     )
 
     # Динамічна кнопка Увімкнути / Вимкнути
@@ -527,7 +517,6 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     inline_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📍 Надіслати мої GPS-координати", callback_data="prompt_gps")],
         [InlineKeyboardButton("🗺️ Обрати область вручну", callback_data="alerts_manual_page_0")],
         [InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")],
         [InlineKeyboardButton("🔍 Перевірити стан тривоги зараз", callback_data="alerts_check")],
@@ -535,8 +524,11 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("❌ Закрити меню", callback_data="close_menu")]
     ])
 
-    await update.effective_message.reply_text(msg_text, reply_markup=inline_kb, parse_mode="Markdown")
-    await update.effective_message.reply_text("👇 **Скористайтеся кнопкою внизу екрана для відправки GPS:**", reply_markup=reply_kb, parse_mode="Markdown")
+    await update.effective_message.reply_text(
+        msg_text,
+        reply_markup=inline_kb,
+        parse_mode="Markdown"
+    )
 
 async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -1120,18 +1112,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         chat_id = query.message.chat_id
         set_awaiting_location(user_id, chat_id, True)
-        reply_kb = ReplyKeyboardMarkup(
-            [
-                [KeyboardButton("📍 Надіслати мою геопозицію", request_location=True)],
-                [KeyboardButton("❌ Скасувати")]
-            ],
-            resize_keyboard=True,
-            one_time_keyboard=True
-        )
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📍 **Натисніть кнопку «📍 Надіслати мою геопозицію» внизу екрана:**",
-            reply_markup=reply_kb,
+            text="📍 **Скористайтеся кнопкою «📍 Надіслати мою геопозицію» внизу екрана:**",
+            reply_markup=get_main_reply_keyboard(),
             parse_mode="Markdown"
         )
         return
@@ -1389,7 +1373,7 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"❌ Не вдалося знайти населений пункт «{text}» в Україні 🇺🇦\n\n"
                 "Спробуйте:\n"
                 "• Написати назву точніше (наприклад: *Бровари*, *м. Одеса*, *с. Софіївська Борщагівка*)\n"
-                "• Або натиснути кнопку **«📍 Надіслати мої GPS-координати»**\n"
+                "• Або натиснути кнопку **«📍 Надіслати мою геопозицію»** внизу екрана\n"
                 "• Або оберіть область вручну у /alerts",
                 parse_mode="Markdown"
             )
