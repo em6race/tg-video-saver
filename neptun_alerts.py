@@ -569,11 +569,26 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         is_close = dist_km is not None and dist_km <= 80
 
         if in_same_oblast or is_close:
+            raw_expl = t.get("explanationShort") or t.get("title", "Зафіксовано ціль")
+            cleaned_expl = _clean_threat_explanation(raw_expl)
+            
+            locality = t.get("locality")
+            region = t.get("region")
+            district = t.get("district")
+
+            if locality and locality.lower() not in cleaned_expl.lower():
+                loc_str = locality
+                if district and district.lower() not in cleaned_expl.lower():
+                    loc_str += f" ({district})"
+                if region and region.lower() not in cleaned_expl.lower():
+                    loc_str += f", {region}"
+                cleaned_expl = f"{cleaned_expl} — {loc_str}"
+
             nearby_threats.append({
                 "id": t.get("id"),
                 "type": t.get("type", "unknown"),
                 "title": t.get("title", "Повітряна ціль"),
-                "explanation": _clean_threat_explanation(t.get("explanationShort") or t.get("title", "Зафіксовано ціль")),
+                "explanation": cleaned_expl,
                 "distance_km": dist_km,
                 "advisory": bool(t.get("advisory", False)),
                 "heading": heading_deg,
