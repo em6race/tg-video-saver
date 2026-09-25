@@ -45,6 +45,7 @@ from handlers.alerts.commands import (
     map_command,
     handle_manual_alert_refresh,
 )
+from handlers.alerts.monitoring import repost_alert_message_to_bottom
 
 logger = logging.getLogger(__name__)
 
@@ -80,28 +81,69 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.delete()
         except Exception:
             pass
-        close_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text="Меню закрито 👍",
-            reply_markup=ReplyKeyboardRemove()
-        )
 
-        async def _auto_delete_notice(msg):
-            await asyncio.sleep(2)
+        sub = await get_user_subscription(user_id)
+        if sub and sub.get("oblast"):
             try:
-                await msg.delete()
-            except Exception:
-                pass
+                alerts_data, threats_data = await fetch_neptun_data()
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+                _user_last_alert_state[user_id] = current_state["level"]
+                _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
-        asyncio.create_task(_auto_delete_notice(close_msg))
+                await repost_alert_message_to_bottom(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    sub=sub,
+                    current_state=current_state,
+                    is_manual_check=True
+                )
+            except Exception as e:
+                logger.warning(f"Failed to repost status card on close_menu: {e}")
+        else:
+            close_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text="Меню закрито 👍",
+                reply_markup=ReplyKeyboardRemove()
+            )
+
+            async def _auto_delete_notice(msg):
+                await asyncio.sleep(2)
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            asyncio.create_task(_auto_delete_notice(close_msg))
         return
 
     elif choice == "close_map":
         await query.answer()
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
         try:
             await query.message.delete()
         except Exception:
             pass
+
+        sub = await get_user_subscription(user_id)
+        if sub and sub.get("oblast"):
+            try:
+                alerts_data, threats_data = await fetch_neptun_data()
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+                _user_last_alert_state[user_id] = current_state["level"]
+                _user_last_threat_signature[user_id] = make_threat_signature(current_state)
+
+                await repost_alert_message_to_bottom(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    sub=sub,
+                    current_state=current_state,
+                    is_manual_check=True
+                )
+            except Exception as e:
+                logger.warning(f"Failed to repost status card on close_map: {e}")
         return
 
     elif choice == "prompt_gps":
@@ -273,11 +315,31 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.delete()
         except Exception:
             pass
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="❌ Встановлення локації скасовано.",
-            reply_markup=ReplyKeyboardRemove()
-        )
+
+        sub = await get_user_subscription(user_id)
+        if sub and sub.get("oblast"):
+            try:
+                alerts_data, threats_data = await fetch_neptun_data()
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+                _user_last_alert_state[user_id] = current_state["level"]
+                _user_last_threat_signature[user_id] = make_threat_signature(current_state)
+
+                await repost_alert_message_to_bottom(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    sub=sub,
+                    current_state=current_state,
+                    is_manual_check=True
+                )
+            except Exception as e:
+                logger.warning(f"Failed to repost status card on cancel_pending_loc: {e}")
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="❌ Встановлення локації скасовано.",
+                reply_markup=ReplyKeyboardRemove()
+            )
         return
 
     elif choice.startswith("set_oblast:"):

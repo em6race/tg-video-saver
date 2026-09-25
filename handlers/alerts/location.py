@@ -21,6 +21,7 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
 )
+from handlers.alerts.monitoring import repost_alert_message_to_bottom
 
 logger = logging.getLogger(__name__)
 
@@ -164,4 +165,25 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     await set_awaiting_location(user_id, chat_id, False)
+
+    sub = await get_user_subscription(user_id)
+    if sub and sub.get("oblast"):
+        try:
+            alerts_data, threats_data = await fetch_neptun_data()
+            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+            _user_last_alert_state[user_id] = current_state["level"]
+            _user_last_threat_signature[user_id] = make_threat_signature(current_state)
+
+            await repost_alert_message_to_bottom(
+                bot=context.bot,
+                chat_id=chat_id,
+                user_id=user_id,
+                sub=sub,
+                current_state=current_state,
+                is_manual_check=True
+            )
+            return
+        except Exception as e:
+            logger.warning(f"Failed to repost status card on cancel_handler: {e}")
+
     await update.message.reply_text("Дію скасовано 👍", reply_markup=ReplyKeyboardRemove())
