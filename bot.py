@@ -101,6 +101,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = user.id
     username = user.username or user.first_name or ""
 
+    welcome_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚨 Налаштувати тривоги", callback_data="open_alerts")],
+        [InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")],
+        [InlineKeyboardButton("❓ Докладна інструкція", callback_data="open_help")]
+    ])
+
     # Перевірка наявності інвайт-коду у /start invite_CODE
     args = context.args
     if args and len(args) > 0 and args[0].startswith("invite_"):
@@ -108,9 +114,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if redeem_invite(invite_code, user_id, username):
             await update.message.reply_text(
                 "🎉 **Ласкаво просимо! Доступ активовано!**\n\n"
-                "Ваше запрошення успішно використано. Тепер ви маєте повний доступ до всіх можливостей бота:\n"
-                "🎥 **Завантаження медіа:** просто надішліть посилання на TikTok, YouTube, Instagram, Twitter, Spotify або SoundCloud.\n"
-                "🚨 **Повітряні тривоги:** команда /alerts дозволить увімкнути сповіщення про загрози (🔴 червоний / 🟡 жовтий рівень) за вашою геопозицією.",
+                "Ваше персональне запрошення успішно активовано. Тепер ви маєте повний доступ до всіх можливостей бота:\n\n"
+                "🎥 **Завантаження медіа:** просто надішліть сюди посилання на TikTok, YouTube, Instagram, Twitter(X), Spotify або SoundCloud.\n"
+                "🚨 **Повітряні тривоги:** налаштуйте сповіщення про небезпеку (🔴/🟡 рівні) для вашого міста чи району.\n\n"
+                "👇 **З чого почати? Оберіть дію нижче:**",
+                reply_markup=welcome_keyboard,
                 parse_mode="Markdown"
             )
             return
@@ -124,17 +132,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if is_user_allowed(user_id, ADMIN_ID):
         await update.message.reply_text(
             f"Привіт, {user.first_name}! 👋\n\n"
-            "Я ваш персональний бот для завантаження медіа та моніторингу повітряних тривог 🚀\n\n"
-            "📥 **Як завантажити відео/музику:**\n"
-            "Просто надішліть сюди посилання на TikTok, Instagram, YouTube, Twitter(X), Spotify або SoundCloud.\n\n"
-            "🚨 **Сповіщення про тривоги:**\n"
-            "Напишіть команду /alerts, щоб прив'язати сповіщення до вашої локації.",
+            "Я ваш персональний бот для завантаження медіа та оперативного моніторингу повітряних тривог 🚀\n\n"
+            "📥 **Швидкий старт:**\n"
+            "• Надішліть посилання на будь-яке відео чи трек для швидкого завантаження.\n"
+            "• Натисніть **«🚨 Налаштувати тривоги»**, щоб увімкнути сповіщення для вашого району.",
+            reply_markup=welcome_keyboard,
             parse_mode="Markdown"
         )
     else:
         await update.message.reply_text(
             "⛔ **Цей бот є приватним.**\n\n"
-            "Щоб отримати доступ, відкрийте посилання-запрошення, надане адміністратором бота."
+            "Щоб отримати доступ, відкрийте персональне посилання-запрошення від адміністратора."
         )
 
 async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -181,21 +189,36 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     help_text = (
-        "👋 *Довідка по боту:*\n\n"
-        "🎥 *Завантаження відео та аудіо*\n"
-        "• *TikTok*: відео без водяного знаку або слайдшоу + музика окремо.\n"
-        "• *YouTube*: інтерактивний вибір (відео, аудіо MP3, або обидва).\n"
-        "• *Instagram & Twitter (X)*: завантаження reels/відео.\n"
-        "• *Spotify, SoundCloud, YouTube Music*: швидке завантаження треків у MP3.\n\n"
-        "🚨 *Повітряні тривоги (NEPTUN API)*\n"
-        "• `/alerts` — увімкнути моніторинг тривог та надіслати геолокацію.\n"
-        "• `/alerts_off` — вимкнути сповіщення про тривоги.\n\n"
-        "⚙️ *Команди адміна*\n"
-        "• `/invite` — створити одноразове посилання для друга.\n"
-        "• `/users` — список дозволених користувачів.\n"
-        "• `/restart` — перезавантажити бота та стягнути оновлення з GitHub."
+        "📖 **Повна інструкція з користування ботом**\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📥 **1. Як завантажувати відео та музику**\n"
+        "Просто надішліть боту посилання на потрібне медіа:\n"
+        "• **TikTok**: скачує відео без водяного знаку + окремо надсилає MP3 аудіо. Для фото-слайдів відправляє всі фото альбомом.\n"
+        "• **YouTube**: запропонує зручні кнопки (🎬 Відео / 🎵 MP3 аудіо / 🎬+🎵 Обидва разом).\n"
+        "• **Instagram / Twitter (X)**: завантажує Reels та відеопости.\n"
+        "• **Spotify, SoundCloud, YT Music**: миттєво знаходить і відправляє готовий трек у форматі MP3 з обкладинкою.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🚨 **2. Як налаштувати повітряні тривоги**\n"
+        "1. Напишіть команду `/alerts`.\n"
+        "2. Натисніть велику кнопку **«📍 Надіслати мою геопозицію»** (або оберіть область вручну зі списку).\n"
+        "3. Бот автоматично визначить ваш район та увімкне сповіщення!\n\n"
+        "**Що означають сповіщення:**\n"
+        "• 🔴 **Червоний рівень** — повітряна тривога! Загроза ракет, балістики, шахедів або КАБ (негайно в укриття!).\n"
+        "• 🟡 **Жовтий рівень** — підвищена небезпека (проліт дронів на підльоті, загроза артобстрілу).\n"
+        "• 🛸 **Цілі поруч** — бот вказує, що саме летить і приблизну відстань у км до вас.\n"
+        "• 🟢 **Відбій** — приходить тихо (без звуку), щоб не турбувати вночі.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🗺 **3. Карта тривог та швидкі команди**\n"
+        "• `/map` — актуальна графічна HD-карта України з тривогами та цілями в небі.\n"
+        "• `/alerts_on` — увімкнути сповіщення (якщо локація вже була задана).\n"
+        "• `/alerts_off` — вимкнути сповіщення.\n"
+        "• `/help` — переглянути цю інструкцію."
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    quick_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚨 Налаштувати тривоги", callback_data="open_alerts")],
+        [InlineKeyboardButton("🗺️ Відкрити карту тривог", callback_data="alerts_map_refresh")]
+    ])
+    await update.message.reply_text(help_text, reply_markup=quick_kb, parse_mode="Markdown")
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -279,8 +302,8 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [toggle_btn]
     ])
 
-    await update.message.reply_text(msg_text, reply_markup=reply_kb, parse_mode="Markdown")
-    await update.message.reply_text("Швидкі дії:", reply_markup=inline_kb)
+    await update.effective_message.reply_text(msg_text, reply_markup=reply_kb, parse_mode="Markdown")
+    await update.effective_message.reply_text("Швидкі дії:", reply_markup=inline_kb)
 
 async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -691,7 +714,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     choice = query.data
 
     # 1. Керування тривогами
-    if choice == "alerts_map_refresh":
+    if choice == "open_alerts":
+        await alerts_command(update, context)
+        return
+
+    elif choice == "open_help":
+        await help_command(update, context)
+        return
+
+    elif choice == "alerts_map_refresh":
         user_id = query.from_user.id
         sub = get_user_subscription(user_id)
         await query.answer("Оновлюю карту...")
