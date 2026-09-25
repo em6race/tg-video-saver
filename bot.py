@@ -47,6 +47,7 @@ from neptun_alerts import (
     fetch_neptun_data,
     evaluate_user_alert_state,
     format_alert_message,
+    generate_alerts_map_image,
     UKRAINE_OBLASTS
 )
 import pytz
@@ -251,6 +252,7 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Інлайн-кнопки швидких дій
     inline_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")],
         [InlineKeyboardButton("🔍 Перевірити стан тривоги зараз", callback_data="alerts_check")],
         [InlineKeyboardButton("🗺️ Обрати область вручну", callback_data="alerts_manual_page_0")],
         [InlineKeyboardButton("🔕 Вимкнути сповіщення", callback_data="alerts_off")]
@@ -273,6 +275,40 @@ async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown"
     )
+
+async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await check_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    sub = get_user_subscription(user_id)
+
+    status_msg = await update.message.reply_text("⏳ Малюю актуальну карту повітряних тривог України...")
+    try:
+        alerts_data, threats_data = await fetch_neptun_data()
+        map_path, caption = await generate_alerts_map_image(alerts_data, threats_data, sub)
+
+        inline_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Оновити карту", callback_data="alerts_map_refresh")],
+            [InlineKeyboardButton("🌐 Жива онлайн-карта (NEPTUN)", url="https://neptun.in.ua/")]
+        ])
+
+        with open(map_path, "rb") as photo_file:
+            await update.message.reply_photo(
+                photo=photo_file,
+                caption=caption,
+                reply_markup=inline_kb,
+                parse_mode="Markdown"
+            )
+
+        if os.path.exists(map_path):
+            os.remove(map_path)
+        await status_msg.delete()
+
+    except Exception as e:
+        logger.error(f"Error generating map: {e}")
+        await status_msg.edit_text(f"❌ Не вдалося створити карту: `{e}`", parse_mode="Markdown")
+
 
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -607,7 +643,34 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     choice = query.data
 
     # 1. Керування тривогами
-    if choice == "alerts_check":
+    if choice == "alerts_map_refresh":
+        user_id = query.from_user.id
+        sub = get_user_subscription(user_id)
+        await query.answer("Оновлюю карту...")
+        try:
+            alerts_data, threats_data = await fetch_neptun_data()
+            map_path, caption = await generate_alerts_map_image(alerts_data, threats_data, sub)
+
+            inline_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Оновити карту", callback_data="alerts_map_refresh")],
+                [InlineKeyboardButton("🌐 Жива онлайн-карта (NEPTUN)", url="https://neptun.in.ua/")]
+            ])
+
+            with open(map_path, "rb") as photo_file:
+                await query.message.reply_photo(
+                    photo=photo_file,
+                    caption=caption,
+                    reply_markup=inline_kb,
+                    parse_mode="Markdown"
+                )
+            if os.path.exists(map_path):
+                os.remove(map_path)
+        except Exception as e:
+            logger.error(f"Error refreshing map: {e}")
+            await query.message.reply_text(f"❌ Не вдалося оновити карту: `{e}`")
+        return
+
+    elif choice == "alerts_check":
         user_id = query.from_user.id
         sub = get_user_subscription(user_id)
         if not sub or not sub.get("enabled"):
@@ -766,6 +829,7 @@ async def post_init(application: Application) -> None:
     commands = [
         BotCommand("start", "Запустити бота"),
         BotCommand("alerts", "Сповіщення про тривоги та локація"),
+        BotCommand("map", "Карта тривог України зараз"),
         BotCommand("alerts_off", "Вимкнути тривоги"),
         BotCommand("help", "Як користуватися та можливості"),
         BotCommand("invite", "Створити запрошення (для адміна)"),
@@ -802,6 +866,7 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("alerts", alerts_command))
+    application.add_handler(CommandHandler("map", map_command))
     application.add_handler(CommandHandler("alerts_off", alerts_off_command))
     application.add_handler(CommandHandler("invite", invite_command))
     application.add_handler(CommandHandler("users", users_command))
