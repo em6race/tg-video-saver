@@ -50,6 +50,7 @@ from neptun_alerts import (
     fetch_neptun_data,
     evaluate_user_alert_state,
     format_alert_message,
+    make_threat_signature,
     generate_alerts_map_image,
     UKRAINE_OBLASTS
 )
@@ -76,8 +77,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Пам'ять останнього рівня тривоги для кожного підписника
-_user_last_alert_state = {}
+# Пам'ять та кулдауни для моніторингу та оновлення тривог
+ALERT_REFRESH_COOLDOWN = 15  # Секунди кулдауну для ручного оновлення
+_user_last_alert_state = {}         # user_id -> рівень ("green", "yellow", "red")
+_user_last_threat_signature = {}    # user_id -> кортеж-сигнатура загроз
+_user_last_auto_edit_time = {}      # user_id -> час останнього редагування ботом
+_user_last_manual_refresh = {}      # user_id -> час останнього запиту користувача
+
+def get_alert_inline_keyboard() -> InlineKeyboardMarkup:
+    """Повертає інлайн-кнопки швидкого ручного оновлення та карти під повідомленням тривоги."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Оновити статус", callback_data="refresh_alert_status"),
+            InlineKeyboardButton("🗺️ Карта тривог", callback_data="alerts_map_refresh")
+        ]
+    ])
 
 async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Перевіряє, чи має користувач доступ до бота (приватний режим)."""
@@ -209,11 +223,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• 🟡 **Жовтий рівень** — підвищена небезпека (проліт дронів на підльоті, загроза артобстрілу).\n"
         "• 🛸 **Цілі поруч** — бот вказує, що саме летить, курс та приблизну відстань у км до вас.\n"
         "• 🟢 **Відбій** — приходить тихо (без звуку), щоб не турбувати вночі.\n"
-        "• 🧹 **Одне оновлюване повідомлення** — бот тримає чат чистим, редагуючи поточне повідомлення при зміні рівня загрози та відбої, тому в чаті не накопичується спам.\n\n"
+        "• 🧹 **Одне оновлюване повідомлення** — бот тримає чат чистим, автоматично редагуючи поточне повідомлення при зміні цілей/рівня небезпеки або відбої.\n"
+        "• 🔄 **Ручне оновлення** — ви можете будь-коли натиснути кнопку **«🔄 Оновити статус»** прямо під повідомленням (діє захисний кулдаун 15 секунд, щоб не перевантажувати сервери).\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🗺 **3. Карта тривог та швидкі команди**\n"
+        "• `/status` (або `/check`) — перевірити актуальну ситуацію у вашому районі.\n"
         "• `/map` — актуальна графічна HD-карта України з тривогами та цілями в небі.\n"
-        "• `/alerts [місто]` — налаштувати локацію або переглянути статус.\n"
+        "• `/alerts [місто]` — налаштувати локацію або переглянути меню.\n"
         "• `/alerts_on` — увімкнути сповіщення (якщо локація вже була задана).\n"
         "• `/alerts_off` — вимкнути сповіщення.\n"
         "• `/help` — переглянути цю інструкцію."
@@ -278,9 +294,16 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
         sub = get_user_subscription(user_id)
         current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
         _user_last_alert_state[user_id] = current_state["level"]
+        _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
         report = format_alert_message(sub, current_state, is_manual_check=True)
-        await msg.reply_text(f"📊 **Поточна ситуація на цей момент:**\n\n{report}", parse_mode="Markdown", disable_web_page_preview=True)
+        sent_status_msg = await msg.reply_text(
+            f"📊 **Поточна ситуація на цей момент:**\n\n{report}",
+            reply_markup=get_alert_inline_keyboard(),
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+        set_user_last_alert_msg_id(user_id, sent_status_msg.message_id)
     except Exception as e:
         logger.warning(f"Failed to fetch initial alert state: {e}")
 
@@ -414,11 +437,20 @@ async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     user_id = update.effective_user.id
+    now = time.time()
+    last_refresh = _user_last_manual_refresh.get(user_id, 0)
+    time_since = now - last_refresh
+    if time_since < ALERT_REFRESH_COOLDOWN:
+        remaining = int(ALERT_REFRESH_COOLDOWN - time_since) + 1
+        await update.message.reply_text(f"⏳ Зачекайте ще {remaining} сек перед наступним оновленням карти.")
+        return
+
+    _user_last_manual_refresh[user_id] = now
     sub = get_user_subscription(user_id)
 
     status_msg = await update.message.reply_text("⏳ Малюю актуальну карту повітряних тривог України...")
     try:
-        alerts_data, threats_data = await fetch_neptun_data()
+        alerts_data, threats_data = await fetch_neptun_data(force=True)
         map_path, caption = await generate_alerts_map_image(alerts_data, threats_data, sub)
 
         inline_kb = InlineKeyboardMarkup([
@@ -733,30 +765,129 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logger.error(f"Error handling URL: {e}")
         await update.message.reply_text(f"❌ Сталася помилка при завантаженні відео.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
 
+async def handle_manual_alert_refresh(query, user_id: int) -> None:
+    """Обробляє ручне оновлення інформації про тривогу користувачем з кулдауном."""
+    now = time.time()
+    last_refresh = _user_last_manual_refresh.get(user_id, 0)
+    time_since = now - last_refresh
+
+    if time_since < ALERT_REFRESH_COOLDOWN:
+        remaining = int(ALERT_REFRESH_COOLDOWN - time_since) + 1
+        await query.answer(f"⏳ Зачекайте {remaining} сек перед наступним оновленням!", show_alert=False)
+        return
+
+    sub = get_user_subscription(user_id)
+    if not sub or not sub.get("oblast"):
+        await query.answer("📍 Спочатку вкажіть вашу локацію через /alerts", show_alert=True)
+        return
+
+    _user_last_manual_refresh[user_id] = now
+    await query.answer("🔄 Оновлюю статус...")
+
+    try:
+        alerts_data, threats_data = await fetch_neptun_data(force=True)
+        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+        _user_last_alert_state[user_id] = current_state["level"]
+        _user_last_threat_signature[user_id] = make_threat_signature(current_state)
+
+        report = format_alert_message(sub, current_state, is_manual_check=True)
+        await query.edit_message_text(
+            report,
+            reply_markup=get_alert_inline_keyboard(),
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        if "Message is not modified" in str(e):
+            logger.info(f"Manual alert refresh: message unchanged for user {user_id}")
+        else:
+            logger.warning(f"Error in manual alert refresh: {e}")
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /status або /check для ручної перевірки ситуації з кулдауном."""
+    if not await check_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    now = time.time()
+    last_refresh = _user_last_manual_refresh.get(user_id, 0)
+    time_since = now - last_refresh
+
+    if time_since < ALERT_REFRESH_COOLDOWN:
+        remaining = int(ALERT_REFRESH_COOLDOWN - time_since) + 1
+        await update.message.reply_text(f"⏳ Зачекайте ще {remaining} сек перед наступним оновленням статусу.")
+        return
+
+    sub = get_user_subscription(user_id)
+    if not sub or not sub.get("oblast"):
+        await update.message.reply_text(
+            "📍 У вас ще не встановлено локацію для моніторингу!\n"
+            "Скористайтеся командою /alerts, щоб вказати ваше місто.",
+            parse_mode="Markdown"
+        )
+        return
+
+    _user_last_manual_refresh[user_id] = now
+    status_msg = await update.message.reply_text("🔍 Отримуємо актуальні дані про тривоги...")
+
+    try:
+        alerts_data, threats_data = await fetch_neptun_data(force=True)
+        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+        _user_last_alert_state[user_id] = current_state["level"]
+        _user_last_threat_signature[user_id] = make_threat_signature(current_state)
+
+        report = format_alert_message(sub, current_state, is_manual_check=True)
+        await status_msg.edit_text(
+            report,
+            reply_markup=get_alert_inline_keyboard(),
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+        set_user_last_alert_msg_id(user_id, status_msg.message_id)
+    except Exception as e:
+        logger.error(f"Error in status_command: {e}")
+        await status_msg.edit_text(f"❌ Не вдалося отримати статус: `{e}`", parse_mode="Markdown")
+
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
 
     if not await check_access(update, context):
+        await query.answer()
         return
 
     choice = query.data
 
     # 1. Керування тривогами
     if choice == "open_alerts":
+        await query.answer()
         await alerts_command(update, context)
         return
 
     elif choice == "open_help":
+        await query.answer()
         await help_command(update, context)
+        return
+
+    elif choice in ("alerts_check", "refresh_alert_status"):
+        user_id = query.from_user.id
+        await handle_manual_alert_refresh(query, user_id)
         return
 
     elif choice == "alerts_map_refresh":
         user_id = query.from_user.id
+        now = time.time()
+        last_refresh = _user_last_manual_refresh.get(user_id, 0)
+        time_since = now - last_refresh
+        if time_since < ALERT_REFRESH_COOLDOWN:
+            remaining = int(ALERT_REFRESH_COOLDOWN - time_since) + 1
+            await query.answer(f"⏳ Зачекайте {remaining} сек перед оновленням карти!", show_alert=False)
+            return
+
+        _user_last_manual_refresh[user_id] = now
         sub = get_user_subscription(user_id)
         await query.answer("Оновлюю карту...")
         try:
-            alerts_data, threats_data = await fetch_neptun_data()
+            alerts_data, threats_data = await fetch_neptun_data(force=True)
             map_path, caption = await generate_alerts_map_image(alerts_data, threats_data, sub)
 
             inline_kb = InlineKeyboardMarkup([
@@ -773,29 +904,20 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 )
             if os.path.exists(map_path):
                 os.remove(map_path)
+
+            # Якщо оновлювали з попереднього фото карти — видаляємо старе повідомлення, щоб тримати чат чистим
+            if query.message and query.message.photo:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Error refreshing map: {e}")
             await query.message.reply_text(f"❌ Не вдалося оновити карту: `{e}`")
         return
 
-    elif choice == "alerts_check":
-        user_id = query.from_user.id
-        sub = get_user_subscription(user_id)
-        if not sub or not sub.get("enabled"):
-            await query.edit_message_text("⚪ У вас наразі вимкнено сповіщення про тривоги. Увімкніть командою /alerts.")
-            return
-
-        try:
-            alerts_data, threats_data = await fetch_neptun_data()
-            state = evaluate_user_alert_state(sub, alerts_data, threats_data)
-            _user_last_alert_state[user_id] = state["level"]
-            report = format_alert_message(sub, state, is_manual_check=True)
-            await query.edit_message_text(report, parse_mode="Markdown", disable_web_page_preview=True)
-        except Exception as e:
-            await query.edit_message_text(f"❌ Не вдалося отримати дані з NEPTUN API: `{e}`", parse_mode="Markdown")
-        return
-
     elif choice == "alerts_on":
+        await query.answer()
         user_id = query.from_user.id
         chat_id = query.message.chat_id
         if enable_user_alerts(user_id, chat_id):
@@ -808,6 +930,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     elif choice == "alerts_off":
+        await query.answer()
         user_id = query.from_user.id
         disable_user_alerts(user_id)
         _user_last_alert_state.pop(user_id, None)
@@ -815,6 +938,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     elif choice.startswith("alerts_manual_page_"):
+        await query.answer()
         page = int(choice.split("_")[-1])
         per_page = 8
         total = len(UKRAINE_OBLASTS)
@@ -840,6 +964,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     elif choice.startswith("set_oblast:"):
+        await query.answer()
         oblast_name = choice.split("set_oblast:")[1]
         user_id = query.from_user.id
         chat_id = query.message.chat_id
@@ -853,6 +978,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     # 2. Вибір формату YouTube
+    await query.answer()
     if not query.message.reply_to_message or not query.message.reply_to_message.text:
         await query.edit_message_text(text="❌ Помилка: не вдалося знайти оригінальне посилання. Відправте його ще раз.")
         return
@@ -924,6 +1050,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
                 alerts_data, threats_data = await fetch_neptun_data()
 
                 if alerts_data or threats_data:
+                    now = time.time()
                     for sub in subs:
                         user_id = sub["user_id"]
                         chat_id = sub["chat_id"]
@@ -932,15 +1059,22 @@ async def alerts_monitoring_loop(application: Application) -> None:
                         current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
                         curr_level = current_state["level"]
                         prev_level = _user_last_alert_state.get(user_id)
+                        current_sig = make_threat_signature(current_state)
+                        prev_sig = _user_last_threat_signature.get(user_id)
+                        last_auto_edit = _user_last_auto_edit_time.get(user_id, 0)
+                        alert_kb = get_alert_inline_keyboard()
 
                         # Первинна ініціалізація без зайвого спаму при запуску бота
                         if prev_level is None:
                             _user_last_alert_state[user_id] = curr_level
+                            _user_last_threat_signature[user_id] = current_sig
                             continue
 
                         # Якщо рівень змінився (наприклад, спокійно -> тривога, або зміна червоний/жовтий, або відбій)
                         if curr_level != prev_level:
                             _user_last_alert_state[user_id] = curr_level
+                            _user_last_threat_signature[user_id] = current_sig
+                            _user_last_auto_edit_time[user_id] = now
                             msg_text = format_alert_message(sub, current_state, is_manual_check=False, prev_level=prev_level)
 
                             # Випадок 1: Нова тривога (зелений -> червоний/жовтий)
@@ -957,6 +1091,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                     sent_msg = await application.bot.send_message(
                                         chat_id=chat_id,
                                         text=msg_text,
+                                        reply_markup=alert_kb,
                                         parse_mode="Markdown",
                                         disable_web_page_preview=True
                                     )
@@ -973,6 +1108,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                             chat_id=chat_id,
                                             message_id=last_msg_id,
                                             text=msg_text,
+                                            reply_markup=alert_kb,
                                             parse_mode="Markdown",
                                             disable_web_page_preview=True
                                         )
@@ -985,6 +1121,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                         sent_msg = await application.bot.send_message(
                                             chat_id=chat_id,
                                             text=msg_text,
+                                            reply_markup=alert_kb,
                                             parse_mode="Markdown",
                                             disable_web_page_preview=True
                                         )
@@ -1001,6 +1138,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                             chat_id=chat_id,
                                             message_id=last_msg_id,
                                             text=msg_text,
+                                            reply_markup=alert_kb,
                                             parse_mode="Markdown",
                                             disable_web_page_preview=True
                                         )
@@ -1013,6 +1151,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                         sent_msg = await application.bot.send_message(
                                             chat_id=chat_id,
                                             text=msg_text,
+                                            reply_markup=alert_kb,
                                             parse_mode="Markdown",
                                             disable_notification=True,
                                             disable_web_page_preview=True
@@ -1020,6 +1159,31 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                         set_user_last_alert_msg_id(user_id, sent_msg.message_id)
                                     except Exception as send_err:
                                         logger.warning(f"Could not send fallback all-clear to {chat_id}: {send_err}")
+
+                        # Випадок 4: Рівень не змінився, але тривога активна і змінилися загрози або минуло 3 хвилини (АВТОМАТИЧНЕ ОНОВЛЕННЯ)
+                        elif curr_level != "green" and last_msg_id:
+                            needs_update = False
+                            if (current_sig != prev_sig) and (now - last_auto_edit >= 15):
+                                needs_update = True
+                            elif (now - last_auto_edit >= 180):
+                                needs_update = True
+
+                            if needs_update:
+                                msg_text = format_alert_message(sub, current_state, is_manual_check=False, prev_level=prev_level)
+                                try:
+                                    await application.bot.edit_message_text(
+                                        chat_id=chat_id,
+                                        message_id=last_msg_id,
+                                        text=msg_text,
+                                        reply_markup=alert_kb,
+                                        parse_mode="Markdown",
+                                        disable_web_page_preview=True
+                                    )
+                                    _user_last_threat_signature[user_id] = current_sig
+                                    _user_last_auto_edit_time[user_id] = now
+                                except Exception as auto_edit_err:
+                                    if "Message is not modified" not in str(auto_edit_err):
+                                        logger.info(f"Auto-update alert message skip for {user_id}: {auto_edit_err}")
 
         except Exception as e:
             logger.error(f"Error in alerts monitoring loop: {e}")
@@ -1046,6 +1210,7 @@ async def post_init(application: Application) -> None:
     commands = [
         BotCommand("start", "Запустити бота"),
         BotCommand("alerts", "Налаштування тривог та локація"),
+        BotCommand("status", "Поточний стан тривог у вашому районі"),
         BotCommand("alerts_on", "Увімкнути сповіщення"),
         BotCommand("alerts_off", "Вимкнути сповіщення"),
         BotCommand("map", "Карта тривог України зараз"),
@@ -1084,6 +1249,8 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("alerts", alerts_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("check", status_command))
     application.add_handler(CommandHandler("alerts_on", alerts_on_command))
     application.add_handler(CommandHandler("alerts_off", alerts_off_command))
     application.add_handler(CommandHandler("map", map_command))

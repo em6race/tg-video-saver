@@ -164,20 +164,43 @@ async def forward_geocode(query: str) -> dict:
         return None
 
 
-async def fetch_neptun_data() -> tuple[dict, dict]:
+_NEPTUN_DATA_CACHE = {
+    "timestamp": 0.0,
+    "alerts": {},
+    "threats": {}
+}
+
+async def fetch_neptun_data(force: bool = False) -> tuple[dict, dict]:
     """
     Отримує актуальні тривоги (/api/v1/alerts) та загрози (/api/v1/threats) з NEPTUN API.
+    Містить короткий кеш (3 секунди), щоб захистити API від перевантаження при одночасних запитах.
     """
+    global _NEPTUN_DATA_CACHE
+    now = time.time()
+    if not force and (now - _NEPTUN_DATA_CACHE["timestamp"] < 3) and _NEPTUN_DATA_CACHE["alerts"]:
+        return _NEPTUN_DATA_CACHE["alerts"], _NEPTUN_DATA_CACHE["threats"]
+
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; TGAlertBot/1.0; +https://neptun.in.ua)"
     }
-    async with aiohttp.ClientSession(headers=headers) as session:
-        async with session.get(NEPTUN_ALERTS_URL, timeout=10) as a_resp:
-            alerts_data = await a_resp.json() if a_resp.status == 200 else {}
-        async with session.get(NEPTUN_THREATS_URL, timeout=10) as t_resp:
-            threats_data = await t_resp.json() if t_resp.status == 200 else {}
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(NEPTUN_ALERTS_URL, timeout=10) as a_resp:
+                alerts_data = await a_resp.json() if a_resp.status == 200 else {}
+            async with session.get(NEPTUN_THREATS_URL, timeout=10) as t_resp:
+                threats_data = await t_resp.json() if t_resp.status == 200 else {}
 
-    return alerts_data, threats_data
+        if alerts_data or threats_data:
+            _NEPTUN_DATA_CACHE["timestamp"] = now
+            _NEPTUN_DATA_CACHE["alerts"] = alerts_data
+            _NEPTUN_DATA_CACHE["threats"] = threats_data
+
+        return alerts_data, threats_data
+    except Exception as e:
+        logger.warning(f"Error fetching NEPTUN data: {e}")
+        if _NEPTUN_DATA_CACHE["alerts"]:
+            return _NEPTUN_DATA_CACHE["alerts"], _NEPTUN_DATA_CACHE["threats"]
+        return {}, {}
 
 async def _ensure_geojson_loaded():
     """Завантажує контури областей та районів України з NEPTUN при першому виклику."""
@@ -495,6 +518,23 @@ def _format_kyiv_time(iso_str: str = None) -> str:
             pass
     return datetime.now(tz).strftime("%H:%M")
 
+def make_threat_signature(state: dict) -> tuple:
+    """
+    Повертає кортеж-сигнатуру поточної загрози для відстеження змін у фоновому моніторингу:
+    рівень, список причин та повітряні цілі (id, тип, відстань з кроком 5 км).
+    """
+    level = state.get("level", "green")
+    reasons = tuple(sorted(state.get("reasons", [])))
+    threats = tuple(
+        (
+            t.get("id"),
+            t.get("type"),
+            round((t.get("distance_km") or 0) / 5) * 5 if t.get("distance_km") is not None else None
+        )
+        for t in state.get("nearby_threats", [])
+    )
+    return (level, reasons, threats)
+
 def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, prev_level: str = None) -> str:
     """
     Формує повідомлення для користувача з кольоровим рівнем, причиною та цілями.
@@ -551,5 +591,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     if level == "red":
         lines.append("\n🙏 *Будь ласка, перебувайте в укритті або дотримуйтесь правила двох стін!*")
 
-    lines.append("\n🗺 [Дані: Карта повітряних тривог — NEPTUN](https://neptun.in.ua/)")
+    now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
+    lines.append(f"\n⏱ **Оновлено:** {now_tz}")
+    lines.append("🗺 [Дані: Карта повітряних тривог — NEPTUN](https://neptun.in.ua/)")
     return "\n".join(lines)
