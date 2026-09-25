@@ -8,9 +8,9 @@ from PIL import Image
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
 
-from downloader import download_video, download_audio
-from tiktok_api import fetch_tiktok_data
-from spotify_api import get_spotify_track_info
+from services.downloader import download_video, download_audio
+from services.tiktok_api import fetch_tiktok_data
+from services.spotify_api import get_spotify_track_info
 from database import get_cached_file_id, set_cached_file_id
 from handlers.common import check_access
 
