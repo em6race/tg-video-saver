@@ -105,6 +105,65 @@ async def reverse_geocode(lat: float, lon: float) -> dict:
         "locality": locality or ""
     }
 
+async def forward_geocode(query: str) -> dict:
+    """
+    Знаходить координати, область, район та населений пункт за текстовою назвою (місто/село/громада).
+    """
+    clean_query = query.strip()
+    if not clean_query:
+        return None
+
+    headers = {
+        "User-Agent": "TG-VideoSaver-AlertBot/1.0 (https://neptun.in.ua)",
+        "Accept-Language": "uk"
+    }
+    params = {
+        "q": clean_query,
+        "countrycodes": "ua",
+        "format": "json",
+        "addressdetails": "1",
+        "accept-language": "uk",
+        "limit": "1"
+    }
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get("https://nominatim.openstreetmap.org/search", params=params, timeout=10) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                if not data:
+                    return None
+                item = data[0]
+
+        addr = item.get("address", {})
+        state = _normalize_apostrophe(addr.get("state", ""))
+        county = _normalize_apostrophe(addr.get("county", "") or addr.get("district", "") or addr.get("state_district", ""))
+        locality = _normalize_apostrophe(
+            addr.get("city", "") or addr.get("town", "") or addr.get("village", "") or addr.get("municipality", "") or clean_query
+        )
+
+        if locality == "Київ" or state in ("Київ", "місто Київ", "м. Київ"):
+            oblast = "м. Київ"
+            if not county:
+                county = "Київ"
+        else:
+            oblast = state
+
+        lat = float(item["lat"]) if "lat" in item else None
+        lon = float(item["lon"]) if "lon" in item else None
+
+        return {
+            "oblast": oblast or "Невідома область",
+            "raion": county or "",
+            "locality": locality or clean_query,
+            "lat": lat,
+            "lon": lon
+        }
+    except Exception as e:
+        logger.warning(f"Failed to forward geocode '{clean_query}': {e}")
+        return None
+
+
 async def fetch_neptun_data() -> tuple[dict, dict]:
     """
     Отримує актуальні тривоги (/api/v1/alerts) та загрози (/api/v1/threats) з NEPTUN API.

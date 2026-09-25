@@ -47,9 +47,14 @@ def init_db():
                 lon REAL,
                 awaiting_location INTEGER DEFAULT 0,
                 enabled INTEGER DEFAULT 0,
+                last_alert_msg_id INTEGER,
                 updated_at TEXT
             )
         ''')
+        try:
+            cursor.execute("ALTER TABLE alert_subscriptions ADD COLUMN last_alert_msg_id INTEGER")
+        except Exception:
+            pass
         conn.commit()
 
 # --- КЕШ ФАЙЛІВ ---
@@ -181,10 +186,20 @@ def save_user_location(user_id: int, chat_id: int, oblast: str, raion: str, loca
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT OR REPLACE INTO alert_subscriptions
+            INSERT INTO alert_subscriptions
             (user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?)
-        ''', (int(user_id), int(chat_id), oblast, raion, locality, lat, lon, now))
+            ON CONFLICT(user_id) DO UPDATE SET
+                chat_id=excluded.chat_id,
+                oblast=excluded.oblast,
+                raion=excluded.raion,
+                locality=excluded.locality,
+                lat=excluded.lat,
+                lon=excluded.lon,
+                awaiting_location=0,
+                enabled=1,
+                updated_at=excluded.updated_at
+        ''', (int(user_id), int(chat_id) if chat_id else None, oblast, raion, locality, lat, lon, now))
         conn.commit()
 
 def disable_user_alerts(user_id: int):
@@ -220,11 +235,17 @@ def enable_user_alerts(user_id: int, chat_id: int = None) -> bool:
         return True
 
 
+def set_user_last_alert_msg_id(user_id: int, msg_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE alert_subscriptions SET last_alert_msg_id=? WHERE user_id=?", (msg_id, int(user_id)))
+        conn.commit()
+
 def get_user_subscription(user_id: int) -> dict:
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id
             FROM alert_subscriptions WHERE user_id=?
         ''', (int(user_id),))
         row = cursor.fetchone()
@@ -239,14 +260,15 @@ def get_user_subscription(user_id: int) -> dict:
             "lat": row[5],
             "lon": row[6],
             "awaiting_location": bool(row[7]),
-            "enabled": bool(row[8])
+            "enabled": bool(row[8]),
+            "last_alert_msg_id": row[9]
         }
 
 def get_all_enabled_subscriptions() -> list[dict]:
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id
             FROM alert_subscriptions WHERE enabled=1 AND oblast IS NOT NULL
         ''')
         rows = cursor.fetchall()
@@ -260,7 +282,9 @@ def get_all_enabled_subscriptions() -> list[dict]:
                 "locality": r[4],
                 "lat": r[5],
                 "lon": r[6],
+                "last_alert_msg_id": r[7]
             })
         return result
 
 init_db()
+

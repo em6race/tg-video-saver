@@ -41,10 +41,12 @@ from database import (
     disable_user_alerts,
     enable_user_alerts,
     get_user_subscription,
-    get_all_enabled_subscriptions
+    get_all_enabled_subscriptions,
+    set_user_last_alert_msg_id
 )
 from neptun_alerts import (
     reverse_geocode,
+    forward_geocode,
     fetch_neptun_data,
     evaluate_user_alert_state,
     format_alert_message,
@@ -199,17 +201,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• **Spotify, SoundCloud, YT Music**: миттєво знаходить і відправляє готовий трек у форматі MP3 з обкладинкою.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🚨 **2. Як налаштувати повітряні тривоги**\n"
-        "1. Напишіть команду `/alerts`.\n"
-        "2. Натисніть велику кнопку **«📍 Надіслати мою геопозицію»** (або оберіть область вручну зі списку).\n"
-        "3. Бот автоматично визначить ваш район та увімкне сповіщення!\n\n"
+        "1. Напишіть команду `/alerts` (або одразу `/alerts НазваМіста`, наприклад `/alerts Ірпінь`).\n"
+        "2. Просто напишіть у чат назву вашого міста/села або натисніть велику кнопку **«📍 Надіслати мою геопозицію»** (також можна обрати область зі списку).\n"
+        "3. Бот автоматично визначить координати, район та увімкне сповіщення!\n\n"
         "**Що означають сповіщення:**\n"
         "• 🔴 **Червоний рівень** — повітряна тривога! Загроза ракет, балістики, шахедів або КАБ (негайно в укриття!).\n"
         "• 🟡 **Жовтий рівень** — підвищена небезпека (проліт дронів на підльоті, загроза артобстрілу).\n"
-        "• 🛸 **Цілі поруч** — бот вказує, що саме летить і приблизну відстань у км до вас.\n"
-        "• 🟢 **Відбій** — приходить тихо (без звуку), щоб не турбувати вночі.\n\n"
+        "• 🛸 **Цілі поруч** — бот вказує, що саме летить, курс та приблизну відстань у км до вас.\n"
+        "• 🟢 **Відбій** — приходить тихо (без звуку), щоб не турбувати вночі.\n"
+        "• 🧹 **Одне оновлюване повідомлення** — бот тримає чат чистим, редагуючи поточне повідомлення при зміні рівня загрози та відбої, тому в чаті не накопичується спам.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🗺 **3. Карта тривог та швидкі команди**\n"
         "• `/map` — актуальна графічна HD-карта України з тривогами та цілями в небі.\n"
+        "• `/alerts [місто]` — налаштувати локацію або переглянути статус.\n"
         "• `/alerts_on` — увімкнути сповіщення (якщо локація вже була задана).\n"
         "• `/alerts_off` — вимкнути сповіщення.\n"
         "• `/help` — переглянути цю інструкцію."
@@ -238,11 +242,56 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # --- ПОВІТРЯНІ ТРИВОГИ ТА ГЕОЛОКАЦІЯ ---
 
+async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int, geo: dict) -> None:
+    """Зберігає локацію користувача, відправляє підтвердження та поточний звіт."""
+    oblast = geo.get("oblast") or ""
+    raion = geo.get("raion") or ""
+    locality = geo.get("locality") or ""
+    lat = geo.get("lat")
+    lon = geo.get("lon")
+
+    save_user_location(user_id, chat_id, oblast, raion, locality, lat, lon)
+
+    loc_parts = [p for p in [locality, raion, oblast] if p]
+    unique_loc = []
+    for p in loc_parts:
+        if p not in unique_loc:
+            unique_loc.append(p)
+    loc_display = ", ".join(unique_loc)
+
+    msg = update.effective_message
+    await msg.reply_text(
+        f"✅ **Локацію успішно збережено!**\n\n"
+        f"📍 **Ваш регіон:** {loc_display}\n\n"
+        "Тепер бот цілодобово моніторитиме повітряний простір для вашої локації і надсилатиме сповіщення про:\n"
+        "🔴 **Червоний рівень** — ракетна/дронова тривога (пройдіть в укриття!)\n"
+        "🟡 **Жовтий рівень** — загроза артобстрілу / підвищена небезпека\n"
+        "🛸 **Повітряні цілі поруч** — тип (БпЛА/ракета), курс та відстань у км\n"
+        "🟢 **Відбій тривоги** (повідомлення оновлюється на спокійний зелений статус)\n\n"
+        "🧹 *У чаті підтримується лише одне повідомлення тривоги, яке автоматично оновлюється та очищується.*",
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="Markdown"
+    )
+
+    try:
+        alerts_data, threats_data = await fetch_neptun_data()
+        sub = get_user_subscription(user_id)
+        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+        _user_last_alert_state[user_id] = current_state["level"]
+
+        report = format_alert_message(sub, current_state, is_manual_check=True)
+        await msg.reply_text(f"📊 **Поточна ситуація на цей момент:**\n\n{report}", parse_mode="Markdown", disable_web_page_preview=True)
+    except Exception as e:
+        logger.warning(f"Failed to fetch initial alert state: {e}")
+
 async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
         return
 
-    # Підтримка команд /alerts on та /alerts off
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # Підтримка команд /alerts on, /alerts off та /alerts <місто>
     args = context.args
     if args and len(args) > 0:
         arg_lower = args[0].lower().strip()
@@ -252,9 +301,20 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         elif arg_lower in ("off", "0", "stop", "disable", "вимк", "вимкнути"):
             await alerts_off_command(update, context)
             return
-
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
+        else:
+            # Текстовий пошук міста прямо з команди: /alerts Київ, /alerts Ірпінь тощо
+            query = " ".join(args).strip()
+            status_msg = await update.message.reply_text(f"🔍 Шукаю населений пункт «{query}»...")
+            geo = await forward_geocode(query)
+            if geo:
+                await status_msg.delete()
+                await save_and_confirm_location(update, context, user_id, chat_id, geo)
+                return
+            else:
+                await status_msg.edit_text(
+                    f"❌ Не вдалося знайти населений пункт «{query}» в Україні 🇺🇦\n\n"
+                    "Спробуйте надіслати геопозицію кнопкою або оберіть область зі списку нижче:"
+                )
 
     sub = get_user_subscription(user_id)
     set_awaiting_location(user_id, chat_id, True)
@@ -274,8 +334,10 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "• `/alerts_on` — увімкнути сповіщення\n"
         "• `/alerts_off` — вимкнути сповіщення\n"
         "• `/map` — переглянути карту тривог\n\n"
-        "📍 **Щоб оновити/прив'язати локацію:**\n"
-        "Натисніть кнопку **'📍 Надіслати мою геопозицію'** на клавіатурі або оберіть область зі списку нижче:"
+        "📍 **Як встановити або оновити вашу локацію:**\n"
+        "1️⃣ **Просто напишіть у цей чат назву вашого міста чи села** (наприклад: `Київ`, `Ірпінь`, `Полтава`)\n"
+        "2️⃣ Або натисніть кнопку **«📍 Надіслати мою геопозицію»** нижче\n"
+        "3️⃣ Або оберіть область зі списку кнопок нижче:"
     )
 
     # Кнопка відправки геопозиції у Reply-клавіатурі
@@ -407,46 +469,13 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         geo = await reverse_geocode(lat, lon)
-        oblast = geo["oblast"]
-        raion = geo["raion"]
-        locality = geo["locality"]
-
-        save_user_location(user_id, chat_id, oblast, raion, locality, lat, lon)
-
-        loc_parts = [p for p in [locality, raion, oblast] if p]
-        unique_loc = []
-        for p in loc_parts:
-            if p not in unique_loc:
-                unique_loc.append(p)
-        loc_display = ", ".join(unique_loc)
-
         await status_msg.delete()
-        await update.message.reply_text(
-            f"✅ **Локацію успішно збережено!**\n\n"
-            f"📍 **Ваш регіон:** {loc_display}\n\n"
-            "Тепер бот цілодобово моніторитиме повітряний простір для вашої локації і надсилатиме сповіщення про:\n"
-            "🔴 **Червоний рівень** — ракетна/дронова тривога (пройдіть в укриття!)\n"
-            "🟡 **Жовтий рівень** — загроза артобстрілу / підвищена небезпека\n"
-            "🛸 **Повітряні цілі поруч** — тип (БпЛА/ракета), курс та відстань у км\n"
-            "🟢 **Відбій тривоги**",
-            reply_markup=ReplyKeyboardRemove(),
-            parse_mode="Markdown"
-        )
-
-        # Одразу перевіряємо поточний стан у цьому районі
-        alerts_data, threats_data = await fetch_neptun_data()
-        sub = get_user_subscription(user_id)
-        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
-        _user_last_alert_state[user_id] = current_state["level"]
-
-        report = format_alert_message(sub, current_state, is_manual_check=True)
-        await update.message.reply_text(f"📊 **Поточна ситуація на цей момент:**\n\n{report}", parse_mode="Markdown", disable_web_page_preview=True)
-
+        await save_and_confirm_location(update, context, user_id, chat_id, geo)
     except Exception as e:
         logger.error(f"Error handling location: {e}")
         await status_msg.edit_text(
             f"❌ Не вдалося точно визначити область за GPS: `{e}`\n\n"
-            "Будь ласка, оберіть вашу область вручну за допомогою /alerts.",
+            "Будь ласка, оберіть вашу область вручну або напишіть назву міста через /alerts.",
             parse_mode="Markdown"
         )
 
@@ -851,7 +880,37 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
         return
-    await update.message.reply_text("Будь ласка, відправте мені дійсне посилання на медіа або скористайтеся командою /alerts.")
+
+    text = update.message.text.strip() if update.message and update.message.text else ""
+    if not text:
+        return
+
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    sub = get_user_subscription(user_id)
+
+    # Якщо користувач у режимі очікування локації (після /alerts або натискання Налаштувати)
+    if sub and sub.get("awaiting_location"):
+        status_msg = await update.message.reply_text(f"🔍 Шукаю населений пункт «{text}»...")
+        geo = await forward_geocode(text)
+        if geo:
+            await status_msg.delete()
+            await save_and_confirm_location(update, context, user_id, chat_id, geo)
+            return
+        else:
+            await status_msg.edit_text(
+                f"❌ Не вдалося знайти населений пункт «{text}» в Україні 🇺🇦\n\n"
+                "Спробуйте:\n"
+                "• Написати назву точніше (наприклад: *Бровари*, *м. Одеса*, *с. Софіївська Борщагівка*)\n"
+                "• Або натиснути кнопку **«📍 Надіслати мою геопозицію»**\n"
+                "• Або оберіть область вручну у /alerts",
+                parse_mode="Markdown"
+            )
+            return
+
+    await update.message.reply_text(
+        "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram тощо) або скористайтеся командою /alerts, щоб налаштувати локацію для сповіщень про тривоги 🚨"
+    )
 
 # --- ФОНОВИЙ МОНІТОРИНГ ТРИВОГ (NEPTUN API) ---
 
@@ -868,6 +927,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
                     for sub in subs:
                         user_id = sub["user_id"]
                         chat_id = sub["chat_id"]
+                        last_msg_id = sub.get("last_alert_msg_id")
 
                         current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
                         curr_level = current_state["level"]
@@ -882,18 +942,84 @@ async def alerts_monitoring_loop(application: Application) -> None:
                         if curr_level != prev_level:
                             _user_last_alert_state[user_id] = curr_level
                             msg_text = format_alert_message(sub, current_state, is_manual_check=False, prev_level=prev_level)
-                            # Відбій тривоги надсилаємо тихо (без звуку), щоб не будити вночі
-                            is_silent = (curr_level == "green")
-                            try:
-                                await application.bot.send_message(
-                                    chat_id=chat_id,
-                                    text=msg_text,
-                                    parse_mode="Markdown",
-                                    disable_notification=is_silent,
-                                    disable_web_page_preview=True
-                                )
-                            except Exception as send_err:
-                                logger.warning(f"Could not send alert to chat_id {chat_id}: {send_err}")
+
+                            # Випадок 1: Нова тривога (зелений -> червоний/жовтий)
+                            if prev_level == "green" and curr_level != "green":
+                                # Видаляємо попереднє повідомлення відбою, щоб чат був чистим
+                                if last_msg_id:
+                                    try:
+                                        await application.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
+                                    except Exception as del_err:
+                                        logger.info(f"Could not delete previous alert message for {user_id}: {del_err}")
+
+                                # Відправляємо нове тривожне повідомлення (зі звуком)
+                                try:
+                                    sent_msg = await application.bot.send_message(
+                                        chat_id=chat_id,
+                                        text=msg_text,
+                                        parse_mode="Markdown",
+                                        disable_web_page_preview=True
+                                    )
+                                    set_user_last_alert_msg_id(user_id, sent_msg.message_id)
+                                except Exception as send_err:
+                                    logger.warning(f"Could not send new alert to {chat_id}: {send_err}")
+
+                            # Випадок 2: Зміна рівня загрози під час тривоги (жовтий <-> червоний)
+                            elif prev_level != "green" and curr_level != "green":
+                                edited = False
+                                if last_msg_id:
+                                    try:
+                                        await application.bot.edit_message_text(
+                                            chat_id=chat_id,
+                                            message_id=last_msg_id,
+                                            text=msg_text,
+                                            parse_mode="Markdown",
+                                            disable_web_page_preview=True
+                                        )
+                                        edited = True
+                                    except Exception as edit_err:
+                                        logger.warning(f"Could not edit active alert message for {user_id}: {edit_err}")
+
+                                if not edited:
+                                    try:
+                                        sent_msg = await application.bot.send_message(
+                                            chat_id=chat_id,
+                                            text=msg_text,
+                                            parse_mode="Markdown",
+                                            disable_web_page_preview=True
+                                        )
+                                        set_user_last_alert_msg_id(user_id, sent_msg.message_id)
+                                    except Exception as send_err:
+                                        logger.warning(f"Could not send fallback alert to {chat_id}: {send_err}")
+
+                            # Випадок 3: Відбій тривоги (червоний/жовтий -> зелений)
+                            elif curr_level == "green":
+                                edited = False
+                                if last_msg_id:
+                                    try:
+                                        await application.bot.edit_message_text(
+                                            chat_id=chat_id,
+                                            message_id=last_msg_id,
+                                            text=msg_text,
+                                            parse_mode="Markdown",
+                                            disable_web_page_preview=True
+                                        )
+                                        edited = True
+                                    except Exception as edit_err:
+                                        logger.warning(f"Could not edit all-clear message for {user_id}: {edit_err}")
+
+                                if not edited:
+                                    try:
+                                        sent_msg = await application.bot.send_message(
+                                            chat_id=chat_id,
+                                            text=msg_text,
+                                            parse_mode="Markdown",
+                                            disable_notification=True,
+                                            disable_web_page_preview=True
+                                        )
+                                        set_user_last_alert_msg_id(user_id, sent_msg.message_id)
+                                    except Exception as send_err:
+                                        logger.warning(f"Could not send fallback all-clear to {chat_id}: {send_err}")
 
         except Exception as e:
             logger.error(f"Error in alerts monitoring loop: {e}")
