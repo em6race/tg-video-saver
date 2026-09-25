@@ -77,20 +77,20 @@ def _heading_to_direction(heading: float) -> tuple[str, str]:
     """Повертає текстовий напрямок та стрілку за градусом (0-360°)."""
     h = float(heading) % 360.0
     dirs = [
-        (337.5, 360.0, "Північ", "↑"),
-        (0.0, 22.5, "Північ", "↑"),
-        (22.5, 67.5, "Північний схід", "↗"),
-        (67.5, 112.5, "Схід", "→"),
-        (112.5, 157.5, "Південний схід", "↘"),
-        (157.5, 202.5, "Південь", "↓"),
-        (202.5, 247.5, "Південний захід", "↙"),
-        (247.5, 292.5, "Захід", "←"),
-        (292.5, 337.5, "Північний захід", "↖"),
+        (337.5, 360.0, "Північ", "⬆️"),
+        (0.0, 22.5, "Північ", "⬆️"),
+        (22.5, 67.5, "Північний схід", "↗️"),
+        (67.5, 112.5, "Схід", "➡️"),
+        (112.5, 157.5, "Південний схід", "↘️"),
+        (157.5, 202.5, "Південь", "⬇️"),
+        (202.5, 247.5, "Південний захід", "↙️"),
+        (247.5, 292.5, "Захід", "⬅️"),
+        (292.5, 337.5, "Північний захід", "↖️"),
     ]
     for low, high, name, arrow in dirs:
         if low <= h < high or (low == 337.5 and h >= 337.5):
             return name, arrow
-    return "Північ", "↑"
+    return "Північ", "⬆️"
 
 def _clean_threat_explanation(text: str) -> str:
     if not text:
@@ -717,10 +717,10 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
                 towards_count += 1
 
             clean_expl = _escape_markdown(t['explanation'])
-            lines.append(f"• **{clean_expl}**{dist_str}")
+            lines.append(f"\n• **{clean_expl}**{dist_str}")
             details = [d for d in [relative_info, heading_info] if d]
             if details:
-                lines.append(f"  🧭 {' | '.join(details)}")
+                lines.append(f"  ↳ {' | '.join(details)}")
 
         if towards_count > 0:
             count_str = "1 цілі" if towards_count == 1 else f"{towards_count} цілей"
