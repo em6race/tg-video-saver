@@ -1,5 +1,6 @@
 import os
 import logging
+import traceback
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from dotenv import load_dotenv
@@ -16,7 +17,7 @@ async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bo
     if not update.effective_user:
         return False
     user_id = update.effective_user.id
-    if is_user_allowed(user_id, ADMIN_ID):
+    if await is_user_allowed(user_id, ADMIN_ID):
         return True
 
     if update.effective_message:
@@ -76,3 +77,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• `/help` — переглянути цю інструкцію."
     )
     await update.message.reply_text(help_text, reply_markup=get_main_reply_keyboard(), parse_mode="Markdown")
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Логує помилку та надсилає сповіщення адміну при виникненні винятку."""
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
+    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    tb_string = "".join(tb_list)
+
+    if ADMIN_ID:
+        try:
+            message = (
+                f"🚨 **Увага! У боті виникла необроблена помилка:**\n\n"
+                f"```python\n{tb_string[-1500:]}\n```"
+            )
+            await context.bot.send_message(chat_id=int(ADMIN_ID), text=message, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"Could not send error notification to admin: {e}")

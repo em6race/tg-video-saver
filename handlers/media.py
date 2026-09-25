@@ -46,7 +46,7 @@ async def clean_old_downloads():
             logger.warning(f"Could not delete old file {file_path}: {e}")
 
 async def process_audio(target_message, context, url):
-    cached_id = get_cached_file_id(url, "audio")
+    cached_id = await get_cached_file_id(url, "audio")
     if cached_id:
         try:
             await target_message.reply_audio(audio=cached_id)
@@ -98,7 +98,7 @@ async def process_audio(target_message, context, url):
                     pool_timeout=60
                 )
                 if msg and msg.audio:
-                    set_cached_file_id(url, "audio", msg.audio.file_id)
+                    await set_cached_file_id(url, "audio", msg.audio.file_id)
             finally:
                 if thumb_file:
                     thumb_file.close()
@@ -113,7 +113,7 @@ async def process_audio(target_message, context, url):
         await target_message.reply_text(f"❌ Сталася помилка при завантаженні аудіо.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
 
 async def process_video(target_message, context, url):
-    cached_id = get_cached_file_id(url, "video")
+    cached_id = await get_cached_file_id(url, "video")
     if cached_id:
         try:
             await target_message.reply_video(video=cached_id)
@@ -133,7 +133,7 @@ async def process_video(target_message, context, url):
                     pool_timeout=60
                 )
                 if msg and msg.video:
-                    set_cached_file_id(url, "video", msg.video.file_id)
+                    await set_cached_file_id(url, "video", msg.video.file_id)
             except Exception as vid_e:
                 logger.warning(f"Failed to send as video: {vid_e}. Trying as document...")
                 video_file.seek(0)
@@ -144,7 +144,7 @@ async def process_video(target_message, context, url):
                     pool_timeout=60
                 )
                 if msg and msg.document:
-                    set_cached_file_id(url, "video", msg.document.file_id)
+                    await set_cached_file_id(url, "video", msg.document.file_id)
         if os.path.exists(file_path):
             os.remove(file_path)
     except Exception as e:

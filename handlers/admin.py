@@ -35,13 +35,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("❓ Докладна інструкція", callback_data="open_help")]
     ])
 
-    # Перевірка наявності інвайт-коду у /start invite_CODE
     args = context.args
     if args and len(args) > 0 and args[0].startswith("invite_"):
         invite_code = args[0].replace("invite_", "").strip()
 
-        # Якщо користувач (наприклад, адмін) уже авторизований — не спалюємо інвайт!
-        if is_user_allowed(user_id, ADMIN_ID):
+        if await is_user_allowed(user_id, ADMIN_ID):
             await update.message.reply_text(
                 "✅ **Ви вже маєте повний доступ до цього бота!**\n\n"
                 "💡 *Це одноразове посилання-запрошення залишилося активним для вашого друга.*",
@@ -50,7 +48,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-        ok, status = redeem_invite(invite_code, user_id, username)
+        ok, status = await redeem_invite(invite_code, user_id, username)
         if ok:
             await update.message.reply_text(
                 "🎉 **Ласкаво просимо! Доступ активовано!**\n\n"
@@ -80,8 +78,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-    # Якщо користувач вже має доступ
-    if is_user_allowed(user_id, ADMIN_ID):
+    if await is_user_allowed(user_id, ADMIN_ID):
         await update.message.reply_text(
             f"Привіт, {user.first_name}! 👋\n\n"
             "Я ваш персональний бот для завантаження медіа та оперативного моніторингу повітряних тривог 🚀\n\n"
@@ -99,21 +96,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if not is_admin(user_id, ADMIN_ID):
+    if not await is_admin(user_id, ADMIN_ID):
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
     args = context.args
     if args and len(args) > 0 and args[0].lower() in ("clear", "clean", "reset", "очистити", "видалити"):
-        deleted = clear_unused_invites()
+        deleted = await clear_unused_invites()
         await update.message.reply_text(f"🗑️ Очищено **{deleted}** невикористаних посилань-запрошень з бази даних.", parse_mode="Markdown")
         return
 
-    code, expires_iso = create_single_use_invite(int(user_id), duration_minutes=30)
+    code, expires_iso = await create_single_use_invite(int(user_id), duration_minutes=30)
     bot_info = await context.bot.get_me()
     invite_url = f"https://t.me/{bot_info.username}?start=invite_{code}"
 
-    # Форматуємо час закінчення дії за київським часом
     try:
         tz = pytz.timezone("Europe/Kiev")
         exp_dt = datetime.fromisoformat(expires_iso).replace(tzinfo=pytz.utc).astimezone(tz)
@@ -138,19 +134,19 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def clear_invites_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if not is_admin(user_id, ADMIN_ID):
+    if not await is_admin(user_id, ADMIN_ID):
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
-    deleted = clear_unused_invites()
+    deleted = await clear_unused_invites()
     await update.message.reply_text(f"🗑️ Видалено **{deleted}** невикористаних запрошень з бази даних.", parse_mode="Markdown")
 
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if not is_admin(user_id, ADMIN_ID):
+    if not await is_admin(user_id, ADMIN_ID):
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
-    users = get_allowed_users_list()
+    users = await get_allowed_users_list()
     if not users:
         await update.message.reply_text("Список користувачів порожній (окрім адміна).")
         return
@@ -164,7 +160,7 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if not is_admin(user_id, ADMIN_ID):
+    if not await is_admin(user_id, ADMIN_ID):
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 

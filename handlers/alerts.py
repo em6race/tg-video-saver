@@ -103,8 +103,8 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
     lat = geo.get("lat")
     lon = geo.get("lon")
 
-    save_user_location(user_id, chat_id, oblast, raion, locality, lat, lon)
-    set_awaiting_location(user_id, chat_id, False)
+    await save_user_location(user_id, chat_id, oblast, raion, locality, lat, lon)
+    await set_awaiting_location(user_id, chat_id, False)
 
     loc_parts = [p for p in [locality, raion, oblast] if p]
     unique_loc = []
@@ -129,7 +129,7 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
 
     try:
         alerts_data, threats_data = await fetch_neptun_data()
-        sub = get_user_subscription(user_id)
+        sub = await get_user_subscription(user_id)
         current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
         _user_last_alert_state[user_id] = current_state["level"]
         _user_last_threat_signature[user_id] = make_threat_signature(current_state)
@@ -141,7 +141,7 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
             parse_mode="Markdown",
             disable_web_page_preview=True
         )
-        set_user_last_alert_msg_id(user_id, sent_status_msg.message_id)
+        await set_user_last_alert_msg_id(user_id, sent_status_msg.message_id)
     except Exception as e:
         logger.warning(f"Failed to fetch initial alert state: {e}")
 
@@ -176,8 +176,8 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "Спробуйте надіслати геопозицію кнопкою або оберіть область зі списку нижче:"
                 )
 
-    sub = get_user_subscription(user_id)
-    set_awaiting_location(user_id, chat_id, True)
+    sub = await get_user_subscription(user_id)
+    await set_awaiting_location(user_id, chat_id, True)
 
     is_enabled = sub and sub.get("enabled")
     status_str = "🟢 **Увімкнено**" if is_enabled else "⚪ **Вимкнено**"
@@ -228,8 +228,8 @@ async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    if enable_user_alerts(user_id, chat_id):
-        sub = get_user_subscription(user_id)
+    if await enable_user_alerts(user_id, chat_id):
+        sub = await get_user_subscription(user_id)
         loc_parts = [p for p in [sub.get("locality"), sub.get("raion"), sub.get("oblast")] if p]
         loc_str = ", ".join(loc_parts) if loc_parts else sub.get("oblast", "")
         await update.message.reply_text(
@@ -254,7 +254,7 @@ async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await delete_user_command_message(update)
     user_id = update.effective_user.id
-    disable_user_alerts(user_id)
+    await disable_user_alerts(user_id)
     _user_last_alert_state.pop(user_id, None)
 
     await update.message.reply_text(
@@ -279,7 +279,7 @@ async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     _user_last_manual_refresh[user_id] = now
-    sub = get_user_subscription(user_id)
+    sub = await get_user_subscription(user_id)
 
     status_msg = await update.message.reply_text("⏳ Малюю актуальну карту повітряних тривог України...")
     try:
@@ -322,7 +322,7 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    sub = get_user_subscription(user_id)
+    sub = await get_user_subscription(user_id)
     if not sub or not sub.get("awaiting_location"):
         await update.message.reply_text(
             "⚠️ Щоб прив'язати або оновити геолокацію для тривог, спочатку активуйте цю функцію командою **/alerts** і натисніть кнопку передачі геопозиції!",
@@ -350,7 +350,7 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    set_awaiting_location(user_id, chat_id, False)
+    await set_awaiting_location(user_id, chat_id, False)
     await update.message.reply_text("Дію скасовано 👍", reply_markup=ReplyKeyboardRemove())
 
 async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: dict, current_state: dict, is_manual_check: bool = False, prev_level: str = None, extra_msg_id_to_delete: int = None) -> None:
@@ -382,7 +382,7 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
             disable_notification=is_silent,
             disable_web_page_preview=True
         )
-        set_user_last_alert_msg_id(user_id, sent_msg.message_id)
+        await set_user_last_alert_msg_id(user_id, sent_msg.message_id)
     except Exception as send_err:
         logger.warning(f"Could not repost alert message to bottom for {chat_id}: {send_err}")
 
@@ -397,7 +397,7 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
         await query.answer(f"⏳ Зачекайте {remaining} сек перед наступним оновленням!", show_alert=False)
         return
 
-    sub = get_user_subscription(user_id)
+    sub = await get_user_subscription(user_id)
     if not sub or not sub.get("oblast"):
         await query.answer("📍 Спочатку вкажіть вашу локацію через /alerts", show_alert=True)
         return
@@ -476,7 +476,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"⏳ Зачекайте ще {remaining} сек перед наступним оновленням статусу.")
         return
 
-    sub = get_user_subscription(user_id)
+    sub = await get_user_subscription(user_id)
     if not sub or not sub.get("oblast"):
         await update.message.reply_text(
             "📍 У вас ще не встановлено локацію для моніторингу!\n"
@@ -524,7 +524,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         user_id = query.from_user.id
         chat_id = query.message.chat_id
-        set_awaiting_location(user_id, chat_id, False)
+        await set_awaiting_location(user_id, chat_id, False)
         try:
             if query.message:
                 await query.message.delete()
@@ -537,7 +537,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         user_id = query.from_user.id
         chat_id = query.message.chat_id
-        set_awaiting_location(user_id, chat_id, False)
+        await set_awaiting_location(user_id, chat_id, False)
         context.user_data.pop("pending_geo", None)
         try:
             await query.message.delete()
@@ -571,7 +571,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         user_id = query.from_user.id
         chat_id = query.message.chat_id
-        set_awaiting_location(user_id, chat_id, True)
+        await set_awaiting_location(user_id, chat_id, True)
         await context.bot.send_message(
             chat_id=chat_id,
             text="📍 **Скористайтеся кнопкою «📍 Надіслати мою геопозицію» внизу екрана:**",
@@ -601,7 +601,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         _user_last_manual_refresh[user_id] = now
-        sub = get_user_subscription(user_id)
+        sub = await get_user_subscription(user_id)
         await query.answer("Оновлюю карту...")
         try:
             alerts_data, threats_data = await fetch_neptun_data(force=True)
@@ -640,8 +640,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         user_id = query.from_user.id
         chat_id = query.message.chat_id
-        if enable_user_alerts(user_id, chat_id):
-            sub = get_user_subscription(user_id)
+        if await enable_user_alerts(user_id, chat_id):
+            sub = await get_user_subscription(user_id)
             loc_parts = [p for p in [sub.get("locality"), sub.get("raion"), sub.get("oblast")] if p]
             loc_str = ", ".join(loc_parts) if loc_parts else sub.get("oblast", "")
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="open_alerts")]])
@@ -654,7 +654,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif choice == "alerts_off":
         await query.answer()
         user_id = query.from_user.id
-        disable_user_alerts(user_id)
+        await disable_user_alerts(user_id)
         _user_last_alert_state.pop(user_id, None)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="open_alerts")]])
         await query.edit_message_text("🔕 **Сповіщення про повітряну тривогу ВИМКНЕНО.**\n\nУвімкнути знову можна командою /alerts_on.", reply_markup=kb, parse_mode="Markdown")
@@ -696,7 +696,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         chat_id = query.message.chat_id
         pending_geo = context.user_data.get("pending_geo")
-        set_awaiting_location(user_id, chat_id, False)
+        await set_awaiting_location(user_id, chat_id, False)
         if pending_geo:
             try:
                 await query.message.delete()
@@ -717,7 +717,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         chat_id = query.message.chat_id
         context.user_data.pop("pending_geo", None)
-        set_awaiting_location(user_id, chat_id, False)
+        await set_awaiting_location(user_id, chat_id, False)
         try:
             await query.message.delete()
         except Exception:
@@ -735,8 +735,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         chat_id = query.message.chat_id
 
-        save_user_location(user_id, chat_id, oblast_name, "", "", None, None)
-        set_awaiting_location(user_id, chat_id, False)
+        await save_user_location(user_id, chat_id, oblast_name, "", "", None, None)
+        await set_awaiting_location(user_id, chat_id, False)
 
         try:
             await query.message.delete()
@@ -753,7 +753,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         try:
             alerts_data, threats_data = await fetch_neptun_data()
-            sub = get_user_subscription(user_id)
+            sub = await get_user_subscription(user_id)
             current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
             _user_last_alert_state[user_id] = current_state["level"]
             _user_last_threat_signature[user_id] = make_threat_signature(current_state)
@@ -766,7 +766,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode="Markdown",
                 disable_web_page_preview=True
             )
-            set_user_last_alert_msg_id(user_id, sent_status_msg.message_id)
+            await set_user_last_alert_msg_id(user_id, sent_status_msg.message_id)
         except Exception as e:
             logger.warning(f"Failed to fetch initial alert state after set_oblast: {e}")
         return
@@ -819,7 +819,7 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    sub = get_user_subscription(user_id)
+    sub = await get_user_subscription(user_id)
 
     if sub and sub.get("awaiting_location"):
         status_msg = await update.message.reply_text(f"🔍 Шукаю населений пункт «{text}»...")
@@ -849,7 +849,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
     logger.info("Starting NEPTUN alert monitoring loop...")
     while True:
         try:
-            subs = get_all_enabled_subscriptions()
+            subs = await get_all_enabled_subscriptions()
             if subs:
                 alerts_data, threats_data = await fetch_neptun_data()
 

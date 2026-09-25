@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 from services.server import start_server_thread
-from handlers.common import myid_command, help_command
+from handlers.common import myid_command, help_command, error_handler
 from handlers.admin import (
     start,
     invite_command,
@@ -72,7 +72,7 @@ async def post_init(application: Application) -> None:
         try:
             await application.bot.send_message(
                 chat_id=int(ADMIN_ID),
-                text="Бот успішно запущений і готовий до роботи! ✅\nПідключено систему повітряних тривог NEPTUN та модульну архітектуру."
+                text="Бот успішно запущений і готовий до роботи! ✅\nПідключено асинхронну БД (aiosqlite) та централізований обробник помилок."
             )
         except Exception as e:
             logger.warning(f"Could not send startup message to admin: {e}")
@@ -82,7 +82,7 @@ async def post_init(application: Application) -> None:
     asyncio.create_task(auto_update(application))
 
 def main() -> None:
-    print("Starting bot with modular architecture...")
+    print("Starting bot with async architecture & error handler...")
 
     downloads_dir = "downloads"
     if os.path.exists(downloads_dir):
@@ -97,6 +97,9 @@ def main() -> None:
     start_server_thread()
 
     application = Application.builder().token(TOKEN).post_init(post_init).build()
+
+    # Реєстрація централізованого обробника помилок
+    application.add_error_handler(error_handler)
 
     # Реєстрація команд
     application.add_handler(CommandHandler("start", start))

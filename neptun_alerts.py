@@ -5,6 +5,8 @@ import math
 import aiohttp
 import logging
 from datetime import datetime
+from dataclasses import dataclass, field, asdict
+from typing import Optional, List, Dict, Any, Tuple
 import pytz
 from PIL import Image, ImageDraw
 
@@ -16,11 +18,68 @@ NEPTUN_OBLASTS_GEOJSON_URL = "https://neptun.in.ua/oblasts.geojson"
 NEPTUN_RAIONS_GEOJSON_URL = "https://neptun.in.ua/raions.geojson"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 
-# Кеш GeoJSON у пам'яті, щоб не завантажувати щоразу
+# Кеш результатів геокодування та GeoJSON у пам'яті
+_NOMINATIM_REVERSE_CACHE: Dict[Tuple[float, float], dict] = {}
+_NOMINATIM_FORWARD_CACHE: Dict[str, dict] = {}
+
 _GEOJSON_CACHE = {
     "oblasts": None,
     "raions": None
 }
+
+@dataclass
+class ThreatItem:
+    id: Optional[str]
+    type: str
+    title: str
+    explanation: str
+    distance_km: Optional[int]
+    advisory: bool
+    heading: Optional[int]
+    direction_name: Optional[str]
+    direction_arrow: Optional[str]
+    relative_dir_name: Optional[str]
+    relative_dir_arrow: Optional[str]
+    is_towards_user: bool
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ThreatItem":
+        return cls(
+            id=data.get("id"),
+            type=data.get("type", "unknown"),
+            title=data.get("title", "Повітряна ціль"),
+            explanation=data.get("explanation", ""),
+            distance_km=data.get("distance_km"),
+            advisory=bool(data.get("advisory", False)),
+            heading=data.get("heading"),
+            direction_name=data.get("direction_name"),
+            direction_arrow=data.get("direction_arrow"),
+            relative_dir_name=data.get("relative_dir_name"),
+            relative_dir_arrow=data.get("relative_dir_arrow"),
+            is_towards_user=bool(data.get("is_towards_user", False))
+        )
+
+@dataclass
+class AlertStateData:
+    active: bool
+    level: str
+    reasons: List[str]
+    since: Optional[str]
+    matched_names: List[str]
+    nearby_threats: List[ThreatItem] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "active": self.active,
+            "level": self.level,
+            "reasons": self.reasons,
+            "since": self.since,
+            "matched_names": self.matched_names,
+            "nearby_threats": [t.to_dict() if isinstance(t, ThreatItem) else t for t in self.nearby_threats]
+        }
 
 UKRAINE_OBLASTS = [
     "м. Київ",
@@ -112,7 +171,12 @@ def _normalize_apostrophe(text: str) -> str:
 async def reverse_geocode(lat: float, lon: float) -> dict:
     """
     Визначає область, район та населений пункт України за координатами GPS.
+    Використовує кеш у пам'яті для мінімізації запитів до Nominatim.
     """
+    cache_key = (round(lat, 4), round(lon, 4))
+    if cache_key in _NOMINATIM_REVERSE_CACHE:
+        return _NOMINATIM_REVERSE_CACHE[cache_key]
+
     headers = {
         "User-Agent": "TG-VideoSaver-AlertBot/1.0 (https://neptun.in.ua)",
         "Accept-Language": "uk"
@@ -148,7 +212,7 @@ async def reverse_geocode(lat: float, lon: float) -> dict:
     else:
         oblast = state
 
-    return {
+    result = {
         "oblast": oblast or "Невідома область",
         "raion": county or "",
         "locality": locality or "",
@@ -157,14 +221,21 @@ async def reverse_geocode(lat: float, lon: float) -> dict:
         "lat": lat,
         "lon": lon
     }
+    _NOMINATIM_REVERSE_CACHE[cache_key] = result
+    return result
 
 async def forward_geocode(query: str) -> dict:
     """
     Знаходить координати, область, район та населений пункт за текстовою назвою (місто/село/громада).
+    Використовує кеш у пам'яті для повторних пошуків.
     """
     clean_query = query.strip()
     if not clean_query:
         return None
+
+    cache_key = clean_query.lower()
+    if cache_key in _NOMINATIM_FORWARD_CACHE:
+        return _NOMINATIM_FORWARD_CACHE[cache_key]
 
     headers = {
         "User-Agent": "TG-VideoSaver-AlertBot/1.0 (https://neptun.in.ua)",
@@ -209,7 +280,7 @@ async def forward_geocode(query: str) -> dict:
         lat = float(item["lat"]) if "lat" in item else None
         lon = float(item["lon"]) if "lon" in item else None
 
-        return {
+        result = {
             "oblast": oblast or "Невідома область",
             "raion": county or "",
             "locality": locality or clean_query,
@@ -218,6 +289,8 @@ async def forward_geocode(query: str) -> dict:
             "lat": lat,
             "lon": lon
         }
+        _NOMINATIM_FORWARD_CACHE[cache_key] = result
+        return result
     except Exception as e:
         logger.warning(f"Failed to forward geocode '{clean_query}': {e}")
         return None
@@ -584,22 +657,23 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
                     loc_str += f", {region}"
                 cleaned_expl = f"{cleaned_expl} — {loc_str}"
 
-            nearby_threats.append({
-                "id": t.get("id"),
-                "type": t.get("type", "unknown"),
-                "title": t.get("title", "Повітряна ціль"),
-                "explanation": cleaned_expl,
-                "distance_km": dist_km,
-                "advisory": bool(t.get("advisory", False)),
-                "heading": heading_deg,
-                "direction_name": direction_name,
-                "direction_arrow": direction_arrow,
-                "relative_dir_name": relative_dir_name,
-                "relative_dir_arrow": relative_dir_arrow,
-                "is_towards_user": is_towards_user
-            })
+            threat_item = ThreatItem(
+                id=t.get("id"),
+                type=t.get("type", "unknown"),
+                title=t.get("title", "Повітряна ціль"),
+                explanation=cleaned_expl,
+                distance_km=dist_km,
+                advisory=bool(t.get("advisory", False)),
+                heading=heading_deg,
+                direction_name=direction_name,
+                direction_arrow=direction_arrow,
+                relative_dir_name=relative_dir_name,
+                relative_dir_arrow=relative_dir_arrow,
+                is_towards_user=is_towards_user
+            )
+            nearby_threats.append(threat_item)
 
-    nearby_threats.sort(key=lambda x: (not x["is_towards_user"], x["distance_km"] if x["distance_km"] is not None else 9999))
+    nearby_threats.sort(key=lambda x: (not x.is_towards_user, x.distance_km if x.distance_km is not None else 9999))
 
     if level != "green" and not reasons:
         if level == "red":
@@ -607,14 +681,15 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         else:
             reasons.append("Підвищена небезпека (жовтий рівень)")
 
-    return {
-        "active": level in ("red", "yellow"),
-        "level": level,
-        "reasons": reasons,
-        "since": since_time,
-        "matched_names": matched_names,
-        "nearby_threats": nearby_threats[:5]
-    }
+    state_obj = AlertStateData(
+        active=level in ("red", "yellow"),
+        level=level,
+        reasons=reasons,
+        since=since_time,
+        matched_names=matched_names,
+        nearby_threats=nearby_threats[:5]
+    )
+    return state_obj.to_dict()
 
 def _format_kyiv_time(iso_str: str = None) -> str:
     tz = pytz.timezone("Europe/Kiev")
