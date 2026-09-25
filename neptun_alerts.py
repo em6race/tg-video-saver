@@ -59,6 +59,38 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
     return R * c
 
+def calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Обчислює початковий азимут (в градусах 0-360) від точки 1 до точки 2."""
+    r_lat1 = math.radians(lat1)
+    r_lat2 = math.radians(lat2)
+    d_lon = math.radians(lon2 - lon1)
+
+    y = math.sin(d_lon) * math.cos(r_lat2)
+    x = math.cos(r_lat1) * math.sin(r_lat2) - math.sin(r_lat1) * math.cos(r_lat2) * math.cos(d_lon)
+    initial_bearing = math.atan2(y, x)
+    initial_bearing = math.degrees(initial_bearing)
+    compass_bearing = (initial_bearing + 360.0) % 360.0
+    return compass_bearing
+
+def _heading_to_direction(heading: float) -> tuple[str, str]:
+    """Повертає текстовий напрямок та стрілку за градусом (0-360°)."""
+    h = float(heading) % 360.0
+    dirs = [
+        (337.5, 360.0, "Північ", "↑"),
+        (0.0, 22.5, "Північ", "↑"),
+        (22.5, 67.5, "Північний схід", "↗"),
+        (67.5, 112.5, "Схід", "→"),
+        (112.5, 157.5, "Південний схід", "↘"),
+        (157.5, 202.5, "Південь", "↓"),
+        (202.5, 247.5, "Південний захід", "↙"),
+        (247.5, 292.5, "Захід", "←"),
+        (292.5, 337.5, "Північний захід", "↖"),
+    ]
+    for low, high, name, arrow in dirs:
+        if low <= h < high or (low == 337.5 and h >= 337.5):
+            return name, arrow
+    return "Північ", "↑"
+
 def _normalize_apostrophe(text: str) -> str:
     if not text:
         return ""
@@ -86,6 +118,10 @@ async def reverse_geocode(lat: float, lon: float) -> dict:
             data = await resp.json()
 
     addr = data.get("address", {})
+    country_code = (addr.get("country_code") or "").lower().strip()
+    country_name = addr.get("country") or ""
+    is_ukraine = (country_code == "ua") or ("укра" in country_name.lower())
+
     state = _normalize_apostrophe(addr.get("state", ""))
     county = _normalize_apostrophe(addr.get("county", "") or addr.get("state_district", "") or addr.get("district", ""))
     locality = _normalize_apostrophe(
@@ -102,7 +138,11 @@ async def reverse_geocode(lat: float, lon: float) -> dict:
     return {
         "oblast": oblast or "Невідома область",
         "raion": county or "",
-        "locality": locality or ""
+        "locality": locality or "",
+        "is_ukraine": is_ukraine,
+        "country_name": country_name,
+        "lat": lat,
+        "lon": lon
     }
 
 async def forward_geocode(query: str) -> dict:
@@ -136,6 +176,10 @@ async def forward_geocode(query: str) -> dict:
                 item = data[0]
 
         addr = item.get("address", {})
+        country_code = (addr.get("country_code") or "").lower().strip()
+        country_name = addr.get("country") or ""
+        is_ukraine = (country_code == "ua") or ("укра" in country_name.lower())
+
         state = _normalize_apostrophe(addr.get("state", ""))
         county = _normalize_apostrophe(addr.get("county", "") or addr.get("district", "") or addr.get("state_district", ""))
         locality = _normalize_apostrophe(
@@ -156,6 +200,8 @@ async def forward_geocode(query: str) -> dict:
             "oblast": oblast or "Невідома область",
             "raion": county or "",
             "locality": locality or clean_query,
+            "is_ukraine": is_ukraine,
+            "country_name": country_name,
             "lat": lat,
             "lon": lon
         }
@@ -478,6 +524,25 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None and not area_only:
             dist_km = round(haversine_km(user_lat, user_lon, t_lat, t_lon))
 
+        heading_raw = t.get("heading")
+        heading_deg = None
+        direction_name = None
+        direction_arrow = None
+        is_towards_user = False
+
+        if heading_raw is not None:
+            try:
+                heading_deg = round(float(heading_raw)) % 360
+                direction_name, direction_arrow = _heading_to_direction(heading_deg)
+
+                if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None:
+                    bearing_to_user = calculate_bearing(t_lat, t_lon, user_lat, user_lon)
+                    angle_diff = abs((heading_deg - bearing_to_user + 180.0) % 360.0 - 180.0)
+                    if angle_diff <= 45.0 and (dist_km is not None and dist_km <= 150):
+                        is_towards_user = True
+            except Exception as ge_err:
+                logger.debug(f"Heading calc error: {ge_err}")
+
         in_same_oblast = _match_oblast(user_oblast, t_region)
         is_close = dist_km is not None and dist_km <= 80
 
@@ -488,10 +553,14 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
                 "title": t.get("title", "Повітряна ціль"),
                 "explanation": t.get("explanationShort") or t.get("title", "Зафіксовано ціль"),
                 "distance_km": dist_km,
-                "advisory": bool(t.get("advisory", False))
+                "advisory": bool(t.get("advisory", False)),
+                "heading": heading_deg,
+                "direction_name": direction_name,
+                "direction_arrow": direction_arrow,
+                "is_towards_user": is_towards_user
             })
 
-    nearby_threats.sort(key=lambda x: x["distance_km"] if x["distance_km"] is not None else 9999)
+    nearby_threats.sort(key=lambda x: (not x["is_towards_user"], x["distance_km"] if x["distance_km"] is not None else 9999))
 
     if level != "green" and not reasons:
         if level == "red":
@@ -521,7 +590,7 @@ def _format_kyiv_time(iso_str: str = None) -> str:
 def make_threat_signature(state: dict) -> tuple:
     """
     Повертає кортеж-сигнатуру поточної загрози для відстеження змін у фоновому моніторингу:
-    рівень, список причин та повітряні цілі (id, тип, відстань з кроком 5 км).
+    рівень, список причин та повітряні цілі (id, тип, відстань з кроком 5 км, статус "до користувача").
     """
     level = state.get("level", "green")
     reasons = tuple(sorted(state.get("reasons", [])))
@@ -529,7 +598,8 @@ def make_threat_signature(state: dict) -> tuple:
         (
             t.get("id"),
             t.get("type"),
-            round((t.get("distance_km") or 0) / 5) * 5 if t.get("distance_km") is not None else None
+            round((t.get("distance_km") or 0) / 5) * 5 if t.get("distance_km") is not None else None,
+            t.get("is_towards_user", False)
         )
         for t in state.get("nearby_threats", [])
     )
@@ -537,7 +607,7 @@ def make_threat_signature(state: dict) -> tuple:
 
 def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, prev_level: str = None) -> str:
     """
-    Формує повідомлення для користувача з кольоровим рівнем, причиною та цілями.
+    Формує повідомлення для користувача з кольоровим рівнем, причиною, векторами цілей та загрозою.
     """
     oblast = sub.get("oblast") or "Невідома область"
     raion = sub.get("raion") or ""
@@ -586,7 +656,15 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         lines.append("\n🛸 **Зафіксовані цілі поруч / в області:**")
         for t in threats:
             dist_str = f" *(~{t['distance_km']} км від вас)*" if t.get("distance_km") is not None else ""
-            lines.append(f"• {t['explanation']}{dist_str}")
+            heading_info = ""
+            if t.get("heading") is not None and t.get("direction_name"):
+                heading_info = f" | курс {t['direction_arrow']} {t['direction_name']} ({t['heading']}°)"
+
+            towards_warn = ""
+            if t.get("is_towards_user"):
+                towards_warn = "\n  ⚠️ **МОЖЛИВА НЕБЕЗПЕКА: Вектор руху цілі спрямований у ваш бік!**"
+
+            lines.append(f"• {t['explanation']}{dist_str}{heading_info}{towards_warn}")
 
     if level == "red":
         lines.append("\n🙏 *Будь ласка, перебувайте в укритті або дотримуйтесь правила двох стін!*")

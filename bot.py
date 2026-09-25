@@ -313,6 +313,54 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # --- ПОВІТРЯНІ ТРИВОГИ ТА ГЕОЛОКАЦІЯ ---
 
+async def prompt_location_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE, geo: dict) -> None:
+    """Виводить результат пошуку населеного пункту і запитує підтвердження користувача."""
+    user_id = update.effective_user.id
+    context.user_data["pending_geo"] = geo
+
+    oblast = geo.get("oblast") or ""
+    raion = geo.get("raion") or ""
+    locality = geo.get("locality") or ""
+    is_ukraine = geo.get("is_ukraine", True)
+    country_name = geo.get("country_name", "")
+
+    if not is_ukraine:
+        msg_text = (
+            f"🌍 **Виявлено локацію за межами України ({country_name or 'Закордон'}):**\n\n"
+            f"📍 **Населений пункт:** {locality} ({oblast})\n\n"
+            "⚠️ *Система моніторингу NEPTUN відстежує повітряний простір тільки в межах України 🇺🇦.*\n\n"
+            "Якщо ви перебуваєте за кордоном, але хочете відстежувати тривоги для вашого рідного міста в Україні (для батьків чи друзів), "
+            "будь ласка, надішліть назву українського міста (наприклад: `Київ`, `Харків`, `Одеса`) або оберіть область зі списку."
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗺️ Обрати область в Україні", callback_data="alerts_manual_page_0")]
+        ])
+        await update.effective_message.reply_text(msg_text, reply_markup=kb, parse_mode="Markdown")
+        return
+
+    loc_parts = [p for p in [locality, raion, oblast] if p]
+    unique_loc = []
+    for p in loc_parts:
+        if p not in unique_loc:
+            unique_loc.append(p)
+    loc_display = ", ".join(unique_loc)
+
+    msg_text = (
+        "📍 **Знайдено населений пункт:**\n\n"
+        f"🏘 **Населений пункт:** {locality or '—'}\n"
+        f"🏛 **Район:** {raion or '—'}\n"
+        f"🗺 **Область:** {oblast or '—'}\n\n"
+        f"👉 **Регіон для сповіщень:** `{loc_display}`\n\n"
+        "Бажаєте підтвердити та встановити цю локацію для моніторингу тривог?"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Підтвердити та встановити", callback_data="confirm_pending_loc")],
+        [InlineKeyboardButton("❌ Ні, шукати інше місто", callback_data="cancel_pending_loc")]
+    ])
+
+    await update.effective_message.reply_text(msg_text, reply_markup=kb, parse_mode="Markdown")
+
 async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int, geo: dict) -> None:
     """Зберігає локацію користувача, відправляє підтвердження та поточний звіт."""
     oblast = geo.get("oblast") or ""
@@ -386,7 +434,7 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             geo = await forward_geocode(query)
             if geo:
                 await status_msg.delete()
-                await save_and_confirm_location(update, context, user_id, chat_id, geo)
+                await prompt_location_confirmation(update, context, geo)
                 return
             else:
                 await status_msg.edit_text(
@@ -557,7 +605,7 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         geo = await reverse_geocode(lat, lon)
         await status_msg.delete()
-        await save_and_confirm_location(update, context, user_id, chat_id, geo)
+        await prompt_location_confirmation(update, context, geo)
     except Exception as e:
         logger.error(f"Error handling location: {e}")
         await status_msg.edit_text(
@@ -1018,6 +1066,28 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("Оберіть вашу область зі списку:", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
+    elif choice == "confirm_pending_loc":
+        await query.answer()
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        pending_geo = context.user_data.get("pending_geo")
+        if pending_geo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await save_and_confirm_location(update, context, user_id, chat_id, pending_geo)
+            context.user_data.pop("pending_geo", None)
+        else:
+            await query.edit_message_text("⚠️ Термін дії запиту минув. Будь ласка, введіть назву міста ще раз через /alerts.")
+        return
+
+    elif choice == "cancel_pending_loc":
+        await query.answer()
+        context.user_data.pop("pending_geo", None)
+        await query.edit_message_text("❌ Встановлення локації скасовано. Введіть іншу назву міста в чат або оберіть зі списку в /alerts.")
+        return
+
     elif choice.startswith("set_oblast:"):
         await query.answer()
         oblast_name = choice.split("set_oblast:")[1]
@@ -1076,7 +1146,7 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         geo = await forward_geocode(text)
         if geo:
             await status_msg.delete()
-            await save_and_confirm_location(update, context, user_id, chat_id, geo)
+            await prompt_location_confirmation(update, context, geo)
             return
         else:
             await status_msg.edit_text(
@@ -1096,7 +1166,7 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # --- ФОНОВИЙ МОНІТОРИНГ ТРИВОГ (NEPTUN API) ---
 
 async def alerts_monitoring_loop(application: Application) -> None:
-    """Фоновий процес опитування NEPTUN API та розсилки сповіщень підписникам."""
+    """Фоновий процес опитування NEPTUN API та розсилки сповіщент підписникам."""
     logger.info("Starting NEPTUN alert monitoring loop...")
     while True:
         try:
@@ -1215,12 +1285,10 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                     except Exception as send_err:
                                         logger.warning(f"Could not send fallback all-clear to {chat_id}: {send_err}")
 
-                        # Випадок 4: Рівень не змінився, але тривога активна і змінилися загрози або минуло 3 хвилини (АВТОМАТИЧНЕ ОНОВЛЕННЯ)
+                        # Випадок 4: Рівень не змінився, але змінився склад або стан цілей в області (АВТОМАТИЧНЕ ОНОВЛЕННЯ ЛИШЕ ПРИ ЗМІНІ ЗАГРОЗ)
                         elif curr_level != "green" and last_msg_id:
                             needs_update = False
                             if (current_sig != prev_sig) and (now - last_auto_edit >= 15):
-                                needs_update = True
-                            elif (now - last_auto_edit >= 180):
                                 needs_update = True
 
                             if needs_update:
