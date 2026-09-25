@@ -871,6 +871,35 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logger.error(f"Error handling URL: {e}")
         await update.message.reply_text(f"❌ Сталася помилка при завантаженні відео.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
 
+async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: dict, current_state: dict, is_manual_check: bool = False, prev_level: str = None) -> None:
+    """
+    Видаляє попереднє повідомлення тривоги та надсилає НОВЕ насамкінець чату.
+    Це гарантує, що повідомлення про тривогу ЗАВЖДИ буде найостаннішим у чаті.
+    """
+    last_msg_id = sub.get("last_alert_msg_id")
+    if last_msg_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
+        except Exception as del_err:
+            logger.debug(f"Could not delete previous alert message {last_msg_id} for user {user_id}: {del_err}")
+
+    msg_text = format_alert_message(sub, current_state, is_manual_check=is_manual_check, prev_level=prev_level)
+    alert_kb = get_alert_inline_keyboard()
+    is_silent = (current_state["level"] == "green")
+
+    try:
+        sent_msg = await bot.send_message(
+            chat_id=chat_id,
+            text=msg_text,
+            reply_markup=alert_kb,
+            parse_mode="Markdown",
+            disable_notification=is_silent,
+            disable_web_page_preview=True
+        )
+        set_user_last_alert_msg_id(user_id, sent_msg.message_id)
+    except Exception as send_err:
+        logger.warning(f"Could not repost alert message to bottom for {chat_id}: {send_err}")
+
 async def handle_manual_alert_refresh(query, user_id: int) -> None:
     """Обробляє ручне оновлення інформації про тривогу користувачем з кулдауном."""
     now = time.time()
@@ -896,18 +925,16 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
         _user_last_alert_state[user_id] = current_state["level"]
         _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
-        report = format_alert_message(sub, current_state, is_manual_check=True)
-        await query.edit_message_text(
-            report,
-            reply_markup=get_alert_inline_keyboard(),
-            parse_mode="Markdown",
-            disable_web_page_preview=True
+        await repost_alert_message_to_bottom(
+            bot=query.message.bot,
+            chat_id=query.message.chat_id,
+            user_id=user_id,
+            sub=sub,
+            current_state=current_state,
+            is_manual_check=True
         )
     except Exception as e:
-        if "Message is not modified" in str(e):
-            logger.info(f"Manual alert refresh: message unchanged for user {user_id}")
-        else:
-            logger.warning(f"Error in manual alert refresh: {e}")
+        logger.warning(f"Error in manual alert refresh: {e}")
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /status або /check для ручної перевірки ситуації з кулдауном."""
@@ -915,6 +942,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     now = time.time()
     last_refresh = _user_last_manual_refresh.get(user_id, 0)
     time_since = now - last_refresh
@@ -942,14 +970,19 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         _user_last_alert_state[user_id] = current_state["level"]
         _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
-        report = format_alert_message(sub, current_state, is_manual_check=True)
-        await status_msg.edit_text(
-            report,
-            reply_markup=get_alert_inline_keyboard(),
-            parse_mode="Markdown",
-            disable_web_page_preview=True
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+        await repost_alert_message_to_bottom(
+            bot=context.bot,
+            chat_id=chat_id,
+            user_id=user_id,
+            sub=sub,
+            current_state=current_state,
+            is_manual_check=True
         )
-        set_user_last_alert_msg_id(user_id, status_msg.message_id)
     except Exception as e:
         logger.error(f"Error in status_command: {e}")
         await status_msg.edit_text(f"❌ Не вдалося отримати статус: `{e}`", parse_mode="Markdown")
@@ -1281,113 +1314,32 @@ async def alerts_monitoring_loop(application: Application) -> None:
                             _user_last_alert_state[user_id] = curr_level
                             _user_last_threat_signature[user_id] = current_sig
                             _user_last_auto_edit_time[user_id] = now
-                            msg_text = format_alert_message(sub, current_state, is_manual_check=False, prev_level=prev_level)
 
-                            # Випадок 1: Нова тривога (зелений -> червоний/жовтий)
-                            if prev_level == "green" and curr_level != "green":
-                                # Видаляємо попереднє повідомлення відбою, щоб чат був чистим
-                                if last_msg_id:
-                                    try:
-                                        await application.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
-                                    except Exception as del_err:
-                                        logger.info(f"Could not delete previous alert message for {user_id}: {del_err}")
+                            await repost_alert_message_to_bottom(
+                                bot=application.bot,
+                                chat_id=chat_id,
+                                user_id=user_id,
+                                sub=sub,
+                                current_state=current_state,
+                                is_manual_check=False,
+                                prev_level=prev_level
+                            )
 
-                                # Відправляємо нове тривожне повідомлення (зі звуком)
-                                try:
-                                    sent_msg = await application.bot.send_message(
-                                        chat_id=chat_id,
-                                        text=msg_text,
-                                        reply_markup=alert_kb,
-                                        parse_mode="Markdown",
-                                        disable_web_page_preview=True
-                                    )
-                                    set_user_last_alert_msg_id(user_id, sent_msg.message_id)
-                                except Exception as send_err:
-                                    logger.warning(f"Could not send new alert to {chat_id}: {send_err}")
-
-                            # Випадок 2: Зміна рівня загрози під час тривоги (жовтий <-> червоний)
-                            elif prev_level != "green" and curr_level != "green":
-                                edited = False
-                                if last_msg_id:
-                                    try:
-                                        await application.bot.edit_message_text(
-                                            chat_id=chat_id,
-                                            message_id=last_msg_id,
-                                            text=msg_text,
-                                            reply_markup=alert_kb,
-                                            parse_mode="Markdown",
-                                            disable_web_page_preview=True
-                                        )
-                                        edited = True
-                                    except Exception as edit_err:
-                                        logger.warning(f"Could not edit active alert message for {user_id}: {edit_err}")
-
-                                if not edited:
-                                    try:
-                                        sent_msg = await application.bot.send_message(
-                                            chat_id=chat_id,
-                                            text=msg_text,
-                                            reply_markup=alert_kb,
-                                            parse_mode="Markdown",
-                                            disable_web_page_preview=True
-                                        )
-                                        set_user_last_alert_msg_id(user_id, sent_msg.message_id)
-                                    except Exception as send_err:
-                                        logger.warning(f"Could not send fallback alert to {chat_id}: {send_err}")
-
-                            # Випадок 3: Відбій тривоги (червоний/жовтий -> зелений)
-                            elif curr_level == "green":
-                                edited = False
-                                if last_msg_id:
-                                    try:
-                                        await application.bot.edit_message_text(
-                                            chat_id=chat_id,
-                                            message_id=last_msg_id,
-                                            text=msg_text,
-                                            reply_markup=alert_kb,
-                                            parse_mode="Markdown",
-                                            disable_web_page_preview=True
-                                        )
-                                        edited = True
-                                    except Exception as edit_err:
-                                        logger.warning(f"Could not edit all-clear message for {user_id}: {edit_err}")
-
-                                if not edited:
-                                    try:
-                                        sent_msg = await application.bot.send_message(
-                                            chat_id=chat_id,
-                                            text=msg_text,
-                                            reply_markup=alert_kb,
-                                            parse_mode="Markdown",
-                                            disable_notification=True,
-                                            disable_web_page_preview=True
-                                        )
-                                        set_user_last_alert_msg_id(user_id, sent_msg.message_id)
-                                    except Exception as send_err:
-                                        logger.warning(f"Could not send fallback all-clear to {chat_id}: {send_err}")
-
-                        # Випадок 4: Рівень не змінився, але змінився склад або стан цілей в області (АВТОМАТИЧНЕ ОНОВЛЕННЯ ЛИШЕ ПРИ ЗМІНІ ЗАГРОЗ)
-                        elif curr_level != "green" and last_msg_id:
-                            needs_update = False
+                        # Якщо рівень той самий, але змінилися загрози у небі
+                        elif curr_level != "green":
                             if (current_sig != prev_sig) and (now - last_auto_edit >= 15):
-                                needs_update = True
+                                _user_last_threat_signature[user_id] = current_sig
+                                _user_last_auto_edit_time[user_id] = now
 
-                            if needs_update:
-                                msg_text = format_alert_message(sub, current_state, is_manual_check=False, prev_level=prev_level)
-                                try:
-                                    await application.bot.edit_message_text(
-                                        chat_id=chat_id,
-                                        message_id=last_msg_id,
-                                        text=msg_text,
-                                        reply_markup=alert_kb,
-                                        parse_mode="Markdown",
-                                        disable_web_page_preview=True
-                                    )
-                                    _user_last_threat_signature[user_id] = current_sig
-                                    _user_last_auto_edit_time[user_id] = now
-                                except Exception as auto_edit_err:
-                                    if "Message is not modified" not in str(auto_edit_err):
-                                        logger.info(f"Auto-update alert message skip for {user_id}: {auto_edit_err}")
+                                await repost_alert_message_to_bottom(
+                                    bot=application.bot,
+                                    chat_id=chat_id,
+                                    user_id=user_id,
+                                    sub=sub,
+                                    current_state=current_state,
+                                    is_manual_check=False,
+                                    prev_level=prev_level
+                                )
 
         except Exception as e:
             logger.error(f"Error in alerts monitoring loop: {e}")
