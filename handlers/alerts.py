@@ -871,15 +871,14 @@ async def alerts_monitoring_loop(application: Application) -> None:
                         if prev_level is None:
                             _user_last_alert_state[user_id] = curr_level
                             _user_last_threat_signature[user_id] = current_sig
-                            if curr_level != "green":
-                                await repost_alert_message_to_bottom(
-                                    bot=application.bot,
-                                    chat_id=chat_id,
-                                    user_id=user_id,
-                                    sub=sub,
-                                    current_state=current_state,
-                                    is_manual_check=False
-                                )
+                            await repost_alert_message_to_bottom(
+                                bot=application.bot,
+                                chat_id=chat_id,
+                                user_id=user_id,
+                                sub=sub,
+                                current_state=current_state,
+                                is_manual_check=True
+                            )
                             continue
 
                         if curr_level != prev_level:
