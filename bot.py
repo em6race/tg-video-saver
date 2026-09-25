@@ -127,6 +127,14 @@ async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bo
         )
     return False
 
+async def delete_user_command_message(update: Update) -> None:
+    """Видаляє вхідне повідомлення-команду від користувача, щоб чат залишався чистим."""
+    if update and update.message:
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logger.debug(f"Could not delete user command message: {e}")
+
 # --- КОМАНДИ ДОСТУПУ ТА АДМІНІСТРУВАННЯ ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,6 +283,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await check_access(update, context):
         return
 
+    await delete_user_command_message(update)
     help_text = (
         "📖 **Повна інструкція з користування ботом**\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -457,6 +466,7 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not await check_access(update, context):
         return
 
+    await delete_user_command_message(update)
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
@@ -534,6 +544,7 @@ async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not await check_access(update, context):
         return
 
+    await delete_user_command_message(update)
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
@@ -561,6 +572,7 @@ async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not await check_access(update, context):
         return
 
+    await delete_user_command_message(update)
     user_id = update.effective_user.id
     disable_user_alerts(user_id)
     _user_last_alert_state.pop(user_id, None)
@@ -576,6 +588,7 @@ async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not await check_access(update, context):
         return
 
+    await delete_user_command_message(update)
     user_id = update.effective_user.id
     now = time.time()
     last_refresh = _user_last_manual_refresh.get(user_id, 0)
@@ -595,7 +608,11 @@ async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         inline_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Оновити карту", callback_data="alerts_map_refresh")],
-            [InlineKeyboardButton("🌐 Жива онлайн-карта (NEPTUN)", url="https://neptun.in.ua/")]
+            [InlineKeyboardButton("🌐 Жива онлайн-карта (NEPTUN)", url="https://neptun.in.ua/")],
+            [
+                InlineKeyboardButton("🏠 В меню", callback_data="open_alerts"),
+                InlineKeyboardButton("❌ Закрити карту", callback_data="close_map")
+            ]
         ])
 
         with open(map_path, "rb") as photo_file:
@@ -1021,6 +1038,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not await check_access(update, context):
         return
 
+    await delete_user_command_message(update)
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     now = time.time()
@@ -1100,11 +1118,28 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.delete()
         except Exception:
             pass
-        await context.bot.send_message(
+        close_msg = await context.bot.send_message(
             chat_id=chat_id,
             text="Меню закрито 👍",
             reply_markup=ReplyKeyboardRemove()
         )
+
+        async def _auto_delete_notice(msg):
+            await asyncio.sleep(2)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+
+        asyncio.create_task(_auto_delete_notice(close_msg))
+        return
+
+    elif choice == "close_map":
+        await query.answer()
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
         return
 
     elif choice == "prompt_gps":
@@ -1150,7 +1185,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             inline_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Оновити карту", callback_data="alerts_map_refresh")],
                 [InlineKeyboardButton("🌐 Жива онлайн-карта (NEPTUN)", url="https://neptun.in.ua/")],
-                [InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts")]
+                [
+                    InlineKeyboardButton("🏠 В меню", callback_data="open_alerts"),
+                    InlineKeyboardButton("❌ Закрити карту", callback_data="close_map")
+                ]
             ])
 
             with open(map_path, "rb") as photo_file:
@@ -1182,10 +1220,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             sub = get_user_subscription(user_id)
             loc_parts = [p for p in [sub.get("locality"), sub.get("raion"), sub.get("oblast")] if p]
             loc_str = ", ".join(loc_parts) if loc_parts else sub.get("oblast", "")
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="open_alerts")]])
             await query.edit_message_text(f"🔔 **Сповіщення про повітряну тривогу успішно УВІМКНЕНО!**\n\n📍 Регіон: {loc_str}", reply_markup=kb, parse_mode="Markdown")
         else:
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="open_alerts")]])
             await query.edit_message_text("📍 Спочатку вкажіть вашу область (надішліть локацію або оберіть зі списку через команду /alerts).", reply_markup=kb)
         return
 
@@ -1194,7 +1232,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         disable_user_alerts(user_id)
         _user_last_alert_state.pop(user_id, None)
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="open_alerts")]])
         await query.edit_message_text("🔕 **Сповіщення про повітряну тривогу ВИМКНЕНО.**\n\nУвімкнути знову можна командою /alerts_on.", reply_markup=kb, parse_mode="Markdown")
         return
 
@@ -1222,7 +1260,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             buttons.append(nav_row)
 
         buttons.append([
-            InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts"),
+            InlineKeyboardButton("🏠 В меню", callback_data="open_alerts"),
             InlineKeyboardButton("❌ Закрити", callback_data="close_menu")
         ])
 
