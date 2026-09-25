@@ -164,7 +164,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
-    status_msg = await update.message.reply_text("⏳ Завантажую оновлення з GitHub і перезавантажуюсь... 🔄")
+    status_msg = await update.message.reply_text("⏳ Завантажую оновлення з GitHub і перезавантажуюсь... 🔄", disable_notification=True)
     await asyncio.sleep(0.5)
 
     git_output = ""

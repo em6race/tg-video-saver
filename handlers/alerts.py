@@ -936,7 +936,11 @@ async def auto_update(application: Application) -> None:
         if now.hour == 3 and now.minute == 0:
             if ADMIN_ID:
                 try:
-                    await application.bot.send_message(chat_id=int(ADMIN_ID), text="🕒 3:00 ночі. Завантажую оновлення з GitHub і перезапускаюсь... 🔄")
+                    await application.bot.send_message(
+                        chat_id=int(ADMIN_ID),
+                        text="🕒 3:00 ночі. Завантажую оновлення з GitHub і перезапускаюсь... 🔄",
+                        disable_notification=True
+                    )
                 except Exception:
                     pass
 

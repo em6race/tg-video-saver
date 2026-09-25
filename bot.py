@@ -72,7 +72,8 @@ async def post_init(application: Application) -> None:
         try:
             await application.bot.send_message(
                 chat_id=int(ADMIN_ID),
-                text="Бот успішно запущений і готовий до роботи! ✅\nПідключено асинхронну БД (aiosqlite) та централізований обробник помилок."
+                text="Бот успішно запущений і готовий до роботи! ✅\nПідключено асинхронну БД (aiosqlite) та централізований обробник помилок.",
+                disable_notification=True
             )
         except Exception as e:
             logger.warning(f"Could not send startup message to admin: {e}")
