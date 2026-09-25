@@ -356,7 +356,8 @@ async def prompt_location_confirmation(update: Update, context: ContextTypes.DEF
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Підтвердити та встановити", callback_data="confirm_pending_loc")],
-        [InlineKeyboardButton("❌ Ні, шукати інше місто", callback_data="cancel_pending_loc")]
+        [InlineKeyboardButton("❌ Ні, шукати інше місто", callback_data="cancel_pending_loc")],
+        [InlineKeyboardButton("🔙 Назад до меню тривог", callback_data="open_alerts")]
     ])
 
     await update.effective_message.reply_text(msg_text, reply_markup=kb, parse_mode="Markdown")
@@ -488,7 +489,8 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")],
         [InlineKeyboardButton("🔍 Перевірити стан тривоги зараз", callback_data="alerts_check")],
         [InlineKeyboardButton("🗺️ Обрати область вручну", callback_data="alerts_manual_page_0")],
-        [toggle_btn]
+        [toggle_btn],
+        [InlineKeyboardButton("❌ Закрити меню", callback_data="close_menu")]
     ])
 
     await update.effective_message.reply_text(msg_text, reply_markup=reply_kb, parse_mode="Markdown")
@@ -964,7 +966,32 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     # 1. Керування тривогами
     if choice == "open_alerts":
         await query.answer()
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        set_awaiting_location(user_id, chat_id, False)
+        try:
+            if query.message:
+                await query.message.delete()
+        except Exception:
+            pass
         await alerts_command(update, context)
+        return
+
+    elif choice == "close_menu":
+        await query.answer()
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        set_awaiting_location(user_id, chat_id, False)
+        context.user_data.pop("pending_geo", None)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Меню закрито 👍",
+            reply_markup=ReplyKeyboardRemove()
+        )
         return
 
     elif choice == "open_help":
@@ -996,7 +1023,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
             inline_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Оновити карту", callback_data="alerts_map_refresh")],
-                [InlineKeyboardButton("🌐 Жива онлайн-карта (NEPTUN)", url="https://neptun.in.ua/")]
+                [InlineKeyboardButton("🌐 Жива онлайн-карта (NEPTUN)", url="https://neptun.in.ua/")],
+                [InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts")]
             ])
 
             with open(map_path, "rb") as photo_file:
@@ -1028,9 +1056,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             sub = get_user_subscription(user_id)
             loc_parts = [p for p in [sub.get("locality"), sub.get("raion"), sub.get("oblast")] if p]
             loc_str = ", ".join(loc_parts) if loc_parts else sub.get("oblast", "")
-            await query.edit_message_text(f"🔔 **Сповіщення про повітряну тривогу успішно УВІМКНЕНО!**\n\n📍 Регіон: {loc_str}", parse_mode="Markdown")
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts")]])
+            await query.edit_message_text(f"🔔 **Сповіщення про повітряну тривогу успішно УВІМКНЕНО!**\n\n📍 Регіон: {loc_str}", reply_markup=kb, parse_mode="Markdown")
         else:
-            await query.edit_message_text("📍 Спочатку вкажіть вашу область (надішліть локацію або оберіть зі списку через команду /alerts).")
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts")]])
+            await query.edit_message_text("📍 Спочатку вкажіть вашу область (надішліть локацію або оберіть зі списку через команду /alerts).", reply_markup=kb)
         return
 
     elif choice == "alerts_off":
@@ -1038,7 +1068,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         disable_user_alerts(user_id)
         _user_last_alert_state.pop(user_id, None)
-        await query.edit_message_text("🔕 **Сповіщення про повітряну тривогу ВИМКНЕНО.**\n\nУвімкнути знову можна командою /alerts_on.", parse_mode="Markdown")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts")]])
+        await query.edit_message_text("🔕 **Сповіщення про повітряну тривогу ВИМКНЕНО.**\n\nУвімкнути знову можна командою /alerts_on.", reply_markup=kb, parse_mode="Markdown")
         return
 
     elif choice.startswith("alerts_manual_page_"):
@@ -1063,6 +1094,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             nav_row.append(InlineKeyboardButton("Вперед ➡️", callback_data=f"alerts_manual_page_{page + 1}"))
         if nav_row:
             buttons.append(nav_row)
+
+        buttons.append([
+            InlineKeyboardButton("🔙 Назад до /alerts", callback_data="open_alerts"),
+            InlineKeyboardButton("❌ Закрити", callback_data="close_menu")
+        ])
 
         await query.edit_message_text("Оберіть вашу область зі списку:", reply_markup=InlineKeyboardMarkup(buttons))
         return
