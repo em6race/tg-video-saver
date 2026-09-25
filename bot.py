@@ -309,7 +309,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         logger.error(f"Git pull failed during restart: {e}")
 
-    os.execv(sys.executable, ['python'] + sys.argv)
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 # --- ПОВІТРЯНІ ТРИВОГИ ТА ГЕОЛОКАЦІЯ ---
 
@@ -1325,10 +1325,19 @@ async def alerts_monitoring_loop(application: Application) -> None:
                         last_auto_edit = _user_last_auto_edit_time.get(user_id, 0)
                         alert_kb = get_alert_inline_keyboard()
 
-                        # Первинна ініціалізація без зайвого спаму при запуску бота
+                        # Первинна ініціалізація при запуску/перезапуску бота: якщо є активна тривога (🔴/🟡), відправляємо її на дно чату!
                         if prev_level is None:
                             _user_last_alert_state[user_id] = curr_level
                             _user_last_threat_signature[user_id] = current_sig
+                            if curr_level != "green":
+                                await repost_alert_message_to_bottom(
+                                    bot=application.bot,
+                                    chat_id=chat_id,
+                                    user_id=user_id,
+                                    sub=sub,
+                                    current_state=current_state,
+                                    is_manual_check=False
+                                )
                             continue
 
                         # Автоматично надсилаємо/пересилаємо сповіщення ТІЛЬКИ при зміні статусу/рівня тривоги
@@ -1455,7 +1464,7 @@ async def auto_update(application: Application) -> None:
                 logger.error(f"Git pull failed: {e}")
 
             await asyncio.sleep(2)
-            os.execv(sys.executable, ['python'] + sys.argv)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
 if __name__ == "__main__":
     main()
