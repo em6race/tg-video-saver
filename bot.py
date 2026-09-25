@@ -486,15 +486,16 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     inline_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📍 Надіслати мої GPS-координати", callback_data="prompt_gps")],
+        [InlineKeyboardButton("🗺️ Обрати область вручну", callback_data="alerts_manual_page_0")],
         [InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")],
         [InlineKeyboardButton("🔍 Перевірити стан тривоги зараз", callback_data="alerts_check")],
-        [InlineKeyboardButton("🗺️ Обрати область вручну", callback_data="alerts_manual_page_0")],
         [toggle_btn],
         [InlineKeyboardButton("❌ Закрити меню", callback_data="close_menu")]
     ])
 
-    await update.effective_message.reply_text(msg_text, reply_markup=reply_kb, parse_mode="Markdown")
-    await update.effective_message.reply_text("Швидкі дії:", reply_markup=inline_kb)
+    await update.effective_message.reply_text(msg_text, reply_markup=inline_kb, parse_mode="Markdown")
+    await update.effective_message.reply_text("👇 **Скористайтеся кнопкою внизу екрана для відправки GPS:**", reply_markup=reply_kb, parse_mode="Markdown")
 
 async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -1024,6 +1025,27 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             chat_id=chat_id,
             text="Меню закрито 👍",
             reply_markup=ReplyKeyboardRemove()
+        )
+        return
+
+    elif choice == "prompt_gps":
+        await query.answer()
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        set_awaiting_location(user_id, chat_id, True)
+        reply_kb = ReplyKeyboardMarkup(
+            [
+                [KeyboardButton("📍 Надіслати мою геопозицію", request_location=True)],
+                [KeyboardButton("❌ Скасувати")]
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📍 **Натисніть кнопку «📍 Надіслати мою геопозицію» внизу екрана:**",
+            reply_markup=reply_kb,
+            parse_mode="Markdown"
         )
         return
 
