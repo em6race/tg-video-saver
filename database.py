@@ -1,6 +1,6 @@
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_PATH = "cache.db"
 
@@ -25,16 +25,25 @@ def init_db():
                 joined_at TEXT
             )
         ''')
-        # Таблиця одноразових інвайт-кодів
+        # Таблиця одноразових інвайт-кодів (з терміном дії 30 хв)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS invites (
                 code TEXT PRIMARY KEY,
                 created_by INTEGER,
                 is_used INTEGER DEFAULT 0,
                 used_by INTEGER,
-                created_at TEXT
+                created_at TEXT,
+                expires_at TEXT
             )
         ''')
+        try:
+            cursor.execute("ALTER TABLE invites ADD COLUMN expires_at TEXT")
+        except Exception:
+            pass
+        # Очищаємо старі інвайти, які були створені до запровадження 30-хвилинного ліміту, та прострочені
+        cursor.execute("DELETE FROM invites WHERE expires_at IS NULL")
+        cursor.execute("DELETE FROM invites WHERE is_used=0 AND expires_at < ?", (datetime.utcnow().isoformat(),))
+
         # Таблиця підписок на повітряні тривоги та геолокації
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS alert_subscriptions (
@@ -123,38 +132,66 @@ def add_allowed_user(user_id: int, username: str = "", invited_by: int = 0):
         ''', (int(user_id), username or "", int(invited_by), now))
         conn.commit()
 
-def create_single_use_invite(created_by: int) -> str:
+def create_single_use_invite(created_by: int, duration_minutes: int = 30) -> tuple[str, str]:
+    """Створює одноразовий інвайт-код з терміном дії (за замовчуванням 30 хвилин)."""
     code = uuid.uuid4().hex[:12]
-    now = datetime.utcnow().isoformat()
+    now = datetime.utcnow()
+    expires = now + timedelta(minutes=duration_minutes)
+    now_str = now.isoformat()
+    expires_str = expires.isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO invites (code, created_by, is_used, used_by, created_at)
-            VALUES (?, ?, 0, NULL, ?)
-        ''', (code, int(created_by), now))
+            INSERT INTO invites (code, created_by, is_used, used_by, created_at, expires_at)
+            VALUES (?, ?, 0, NULL, ?, ?)
+        ''', (code, int(created_by), now_str, expires_str))
         conn.commit()
-    return code
+    return code, expires_str
 
-def redeem_invite(code: str, user_id: int, username: str = "") -> bool:
+def redeem_invite(code: str, user_id: int, username: str = "") -> tuple[bool, str]:
+    """
+    Перевіряє та активує інвайт-код.
+    Повертає (success: bool, status: str).
+    status: 'ok', 'not_found', 'already_used', 'expired'
+    """
+    now = datetime.utcnow()
+    now_str = now.isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT created_by, is_used FROM invites WHERE code=?", (code,))
+        cursor.execute("SELECT created_by, is_used, expires_at FROM invites WHERE code=?", (code,))
         row = cursor.fetchone()
         if not row:
-            return False
-        created_by, is_used = row
+            return False, "not_found"
+        created_by, is_used, expires_at = row
         if is_used:
-            return False
-        now = datetime.utcnow().isoformat()
+            return False, "already_used"
+
+        if expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(expires_at)
+                if now > exp_dt:
+                    return False, "expired"
+            except Exception:
+                pass
+
         cursor.execute('''
             UPDATE invites SET is_used=1, used_by=? WHERE code=?
         ''', (int(user_id), code))
         cursor.execute('''
             INSERT OR REPLACE INTO allowed_users (user_id, username, invited_by, joined_at)
             VALUES (?, ?, ?, ?)
-        ''', (int(user_id), username or "", created_by, now))
+        ''', (int(user_id), username or "", created_by, now_str))
         conn.commit()
-        return True
+        return True, "ok"
+
+def clear_unused_invites() -> int:
+    """Видаляє всі невикористані інвайти з бази даних. Повертає кількість видалених."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM invites WHERE is_used=0")
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
 
 def get_allowed_users_list() -> list:
     with sqlite3.connect(DB_PATH) as conn:

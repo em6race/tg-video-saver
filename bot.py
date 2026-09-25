@@ -35,6 +35,7 @@ from database import (
     is_user_allowed,
     create_single_use_invite,
     redeem_invite,
+    clear_unused_invites,
     get_allowed_users_list,
     set_awaiting_location,
     save_user_location,
@@ -127,7 +128,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if args and len(args) > 0 and args[0].startswith("invite_"):
         invite_code = args[0].replace("invite_", "").strip()
-        if redeem_invite(invite_code, user_id, username):
+
+        # Якщо користувач (наприклад, адмін) уже авторизований — не спалюємо інвайт!
+        if is_user_allowed(user_id, ADMIN_ID):
+            await update.message.reply_text(
+                "✅ **Ви вже маєте повний доступ до цього бота!**\n\n"
+                "💡 *Це одноразове посилання-запрошення залишилося активним для вашого друга.*",
+                reply_markup=welcome_keyboard,
+                parse_mode="Markdown"
+            )
+            return
+
+        ok, status = redeem_invite(invite_code, user_id, username)
+        if ok:
             await update.message.reply_text(
                 "🎉 **Ласкаво просимо! Доступ активовано!**\n\n"
                 "Ваше персональне запрошення успішно активовано. Тепер ви маєте повний доступ до всіх можливостей бота:\n\n"
@@ -138,9 +151,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 parse_mode="Markdown"
             )
             return
+        elif status == "expired":
+            await update.message.reply_text(
+                "⏳ **Термін дії цього запрошення минув (30 хвилин).**\n\n"
+                "Посилання більше не дійсне. Будь ласка, попросіть власника бота надіслати вам нове посилання-запрошення.",
+                parse_mode="Markdown"
+            )
+            return
+        elif status == "already_used":
+            await update.message.reply_text(
+                "❌ **Помилка запрошення:** це одноразове посилання вже було використане іншою людиною."
+            )
+            return
         else:
             await update.message.reply_text(
-                "❌ **Помилка запрошення:** це посилання-запрошення недійсне або вже було використане іншою людиною."
+                "❌ **Помилка запрошення:** це посилання недійсне або було скасоване."
             )
             return
 
@@ -167,16 +192,46 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
-    code = create_single_use_invite(int(user_id))
+    args = context.args
+    if args and len(args) > 0 and args[0].lower() in ("clear", "clean", "reset", "очистити", "видалити"):
+        deleted = clear_unused_invites()
+        await update.message.reply_text(f"🗑️ Очищено **{deleted}** невикористаних посилань-запрошень з бази даних.", parse_mode="Markdown")
+        return
+
+    code, expires_iso = create_single_use_invite(int(user_id), duration_minutes=30)
     bot_info = await context.bot.get_me()
     invite_url = f"https://t.me/{bot_info.username}?start=invite_{code}"
 
+    # Форматуємо час закінчення дії за київським часом
+    try:
+        tz = pytz.timezone("Europe/Kiev")
+        exp_dt = datetime.fromisoformat(expires_iso).replace(tzinfo=pytz.utc).astimezone(tz)
+        exp_str = exp_dt.strftime("%H:%M")
+    except Exception:
+        exp_str = "через 30 хв"
+
+    share_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚀 Відкрити та активувати бота", url=invite_url)],
+        [InlineKeyboardButton("📤 Поділитися з другом", url=f"https://t.me/share/url?url={invite_url}")]
+    ])
+
     await update.message.reply_text(
-        "🎟️ **Одноразове посилання-запрошення створено:**\n\n"
-        f"`{invite_url}`\n\n"
-        "⚠️ *Це посилання може використати лише 1 людина. Після першого натискання Start воно стане недійсним.*",
-        parse_mode="Markdown"
+        "🎟️ <b>Персональне посилання-запрошення:</b>\n\n"
+        f"👉 <a href=\"{invite_url}\">{invite_url}</a>\n\n"
+        f"⏳ <i>Посилання дійсне протягом <b>30 хвилин</b> (до {exp_str}) та розраховане лише на <b>1 людину</b>.</i>\n\n"
+        "💡 <i>Ви можете просто переслати це повідомлення другу в інший чат — йому буде достатньо лише клікнути на посилання чи кнопку нижче!</i>",
+        reply_markup=share_kb,
+        parse_mode="HTML",
+        disable_web_page_preview=True
     )
+
+async def clear_invites_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if not is_admin(user_id, ADMIN_ID):
+        await update.message.reply_text("У вас немає прав для цієї команди 🚫")
+        return
+    deleted = clear_unused_invites()
+    await update.message.reply_text(f"🗑️ Видалено **{deleted}** невикористаних запрошень з бази даних.", parse_mode="Markdown")
 
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -1216,6 +1271,7 @@ async def post_init(application: Application) -> None:
         BotCommand("map", "Карта тривог України зараз"),
         BotCommand("help", "Як користуватися та можливості"),
         BotCommand("invite", "Створити запрошення (для адміна)"),
+        BotCommand("clear_invites", "Видалити невикористані інвайти (адмін)"),
         BotCommand("users", "Список користувачів (для адміна)"),
         BotCommand("restart", "Перезапустити бота (для адміна)"),
     ]
@@ -1255,6 +1311,7 @@ def main() -> None:
     application.add_handler(CommandHandler("alerts_off", alerts_off_command))
     application.add_handler(CommandHandler("map", map_command))
     application.add_handler(CommandHandler("invite", invite_command))
+    application.add_handler(CommandHandler("clear_invites", clear_invites_command))
     application.add_handler(CommandHandler("users", users_command))
     application.add_handler(CommandHandler("myid", myid_command))
     application.add_handler(CommandHandler("help", help_command))
