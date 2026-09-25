@@ -589,8 +589,8 @@ def _format_kyiv_time(iso_str: str = None) -> str:
 
 def make_threat_signature(state: dict) -> tuple:
     """
-    Повертає кортеж-сигнатуру поточної загрози для відстеження змін у фоновому моніторингу:
-    рівень, список причин та повітряні цілі (id, тип, відстань з кроком 5 км, статус "до користувача").
+    Повертає кортеж-сигнатуру поточної загрози для відстеження важливих змін у фоновому моніторингу:
+    рівень, список причин та суттєвий склад цілей (id, тип, напрямок до користувача).
     """
     level = state.get("level", "green")
     reasons = tuple(sorted(state.get("reasons", [])))
@@ -598,7 +598,6 @@ def make_threat_signature(state: dict) -> tuple:
         (
             t.get("id"),
             t.get("type"),
-            round((t.get("distance_km") or 0) / 5) * 5 if t.get("distance_km") is not None else None,
             t.get("is_towards_user", False)
         )
         for t in state.get("nearby_threats", [])

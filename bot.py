@@ -1347,9 +1347,9 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                 prev_level=prev_level
                             )
 
-                        # Якщо рівень той самий, але змінилися загрози у небі
+                        # Якщо рівень той самий, але змінилися загрози у небі (не частіше ніж раз на 3 хвилини)
                         elif curr_level != "green":
-                            if (current_sig != prev_sig) and (now - last_auto_edit >= 15):
+                            if (current_sig != prev_sig) and (now - last_auto_edit >= 180):
                                 _user_last_threat_signature[user_id] = current_sig
                                 _user_last_auto_edit_time[user_id] = now
 
