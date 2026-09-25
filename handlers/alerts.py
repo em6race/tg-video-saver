@@ -17,6 +17,7 @@ from database import (
     get_user_subscription,
     get_all_enabled_subscriptions,
     set_user_last_alert_msg_id,
+    toggle_user_sound,
     is_admin
 )
 from neptun_alerts import (
@@ -134,10 +135,11 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
         _user_last_alert_state[user_id] = current_state["level"]
         _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
+        sound_enabled = sub.get("sound_enabled", True) if sub else True
         report = format_alert_message(sub, current_state, is_manual_check=True)
         sent_status_msg = await msg.reply_text(
             f"📊 **Поточна ситуація на цей момент:**\n\n{report}",
-            reply_markup=get_alert_inline_keyboard(),
+            reply_markup=get_alert_inline_keyboard(sound_enabled),
             parse_mode="Markdown",
             disable_web_page_preview=True
         )
@@ -369,9 +371,10 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
         except Exception as del_err:
             logger.debug(f"Could not delete old alert message {m_id} for user {user_id}: {del_err}")
 
+    sound_enabled = sub.get("sound_enabled", True) if sub else True
     msg_text = format_alert_message(sub, current_state, is_manual_check=is_manual_check, prev_level=prev_level)
-    alert_kb = get_alert_inline_keyboard()
-    is_silent = (current_state["level"] == "green")
+    alert_kb = get_alert_inline_keyboard(sound_enabled)
+    is_silent = (current_state["level"] == "green") or (not sound_enabled)
 
     try:
         sent_msg = await bot.send_message(
@@ -416,8 +419,9 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
         _user_last_alert_state[user_id] = current_state["level"]
         _user_last_threat_signature[user_id] = current_sig
 
+        sound_enabled = sub.get("sound_enabled", True) if sub else True
         msg_text = format_alert_message(sub, current_state, is_manual_check=True)
-        alert_kb = get_alert_inline_keyboard()
+        alert_kb = get_alert_inline_keyboard(sound_enabled)
 
         is_same_as_last = (current_msg_id == last_stored_msg_id)
         edited_inplace = False
@@ -583,6 +587,20 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif choice == "open_help":
         await query.answer()
         await help_command(update, context)
+        return
+
+    elif choice == "toggle_sound":
+        user_id = query.from_user.id
+        new_sound = await toggle_user_sound(user_id)
+        status_text = "🔔 Сповіщення зі звуком УВІМКНЕНО!" if new_sound else "🔕 Сповіщення без звуку (тихий режим) УВІМКНЕНО!"
+        await query.answer(status_text, show_alert=False)
+
+        sub = await get_user_subscription(user_id)
+        if sub:
+            try:
+                await query.edit_message_reply_markup(reply_markup=get_alert_inline_keyboard(new_sound))
+            except Exception as e:
+                logger.debug(f"Could not update reply_markup on toggle_sound: {e}")
         return
 
     elif choice in ("alerts_check", "refresh_alert_status"):
@@ -758,11 +776,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             _user_last_alert_state[user_id] = current_state["level"]
             _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
+            sound_enabled = sub.get("sound_enabled", True) if sub else True
             report = format_alert_message(sub, current_state, is_manual_check=True)
             sent_status_msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"📊 **Поточна ситуація на цей момент:**\n\n{report}",
-                reply_markup=get_alert_inline_keyboard(),
+                reply_markup=get_alert_inline_keyboard(sound_enabled),
                 parse_mode="Markdown",
                 disable_web_page_preview=True
             )
@@ -866,7 +885,8 @@ async def alerts_monitoring_loop(application: Application) -> None:
                         current_sig = make_threat_signature(current_state)
                         prev_sig = _user_last_threat_signature.get(user_id)
                         last_auto_edit = _user_last_auto_edit_time.get(user_id, 0)
-                        alert_kb = get_alert_inline_keyboard()
+                        sound_enabled = sub.get("sound_enabled", True)
+                        alert_kb = get_alert_inline_keyboard(sound_enabled)
 
                         if prev_level is None:
                             _user_last_alert_state[user_id] = curr_level

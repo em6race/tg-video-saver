@@ -70,6 +70,10 @@ def init_db():
             cursor.execute("ALTER TABLE alert_subscriptions ADD COLUMN last_alert_msg_id INTEGER")
         except Exception:
             pass
+        try:
+            cursor.execute("ALTER TABLE alert_subscriptions ADD COLUMN sound_enabled INTEGER DEFAULT 1")
+        except Exception:
+            pass
         conn.commit()
 
 # --- АСИНХРОННИЙ КЕШ ФАЙЛІВ ---
@@ -373,7 +377,7 @@ async def get_user_subscription(user_id: int) -> dict:
         return await asyncio.to_thread(get_user_subscription_sync, user_id)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id, sound_enabled
             FROM alert_subscriptions WHERE user_id=?
         ''', (int(user_id),)) as cursor:
             row = await cursor.fetchone()
@@ -389,14 +393,15 @@ async def get_user_subscription(user_id: int) -> dict:
                 "lon": row[6],
                 "awaiting_location": bool(row[7]),
                 "enabled": bool(row[8]),
-                "last_alert_msg_id": row[9]
+                "last_alert_msg_id": row[9],
+                "sound_enabled": bool(row[10] if len(row) > 10 and row[10] is not None else 1)
             }
 
 def get_user_subscription_sync(user_id: int) -> dict:
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id, sound_enabled
             FROM alert_subscriptions WHERE user_id=?
         ''', (int(user_id),))
         row = cursor.fetchone()
@@ -412,13 +417,14 @@ def get_user_subscription_sync(user_id: int) -> dict:
             "lon": row[6],
             "awaiting_location": bool(row[7]),
             "enabled": bool(row[8]),
-            "last_alert_msg_id": row[9]
+            "last_alert_msg_id": row[9],
+            "sound_enabled": bool(row[10] if len(row) > 10 and row[10] is not None else 1)
         }
 
 async def get_all_enabled_subscriptions() -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id, sound_enabled
             FROM alert_subscriptions WHERE enabled=1 AND oblast IS NOT NULL
         ''') as cursor:
             rows = await cursor.fetchall()
@@ -432,8 +438,32 @@ async def get_all_enabled_subscriptions() -> list[dict]:
                     "locality": r[4],
                     "lat": r[5],
                     "lon": r[6],
-                    "last_alert_msg_id": r[7]
+                    "last_alert_msg_id": r[7],
+                    "sound_enabled": bool(r[8] if len(r) > 8 and r[8] is not None else 1)
                 })
             return result
+
+async def toggle_user_sound(user_id: int) -> bool:
+    if aiosqlite is None:
+        return await asyncio.to_thread(toggle_user_sound_sync, user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT sound_enabled FROM alert_subscriptions WHERE user_id=?", (int(user_id),)) as cursor:
+            row = await cursor.fetchone()
+            current_sound = bool(row[0] if row and row[0] is not None else 1)
+        new_sound = 0 if current_sound else 1
+        await db.execute("UPDATE alert_subscriptions SET sound_enabled=? WHERE user_id=?", (new_sound, int(user_id)))
+        await db.commit()
+        return bool(new_sound)
+
+def toggle_user_sound_sync(user_id: int) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT sound_enabled FROM alert_subscriptions WHERE user_id=?", (int(user_id),))
+        row = cursor.fetchone()
+        current_sound = bool(row[0] if row and row[0] is not None else 1)
+        new_sound = 0 if current_sound else 1
+        cursor.execute("UPDATE alert_subscriptions SET sound_enabled=? WHERE user_id=?", (new_sound, int(user_id)))
+        conn.commit()
+        return bool(new_sound)
 
 init_db()
