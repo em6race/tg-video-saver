@@ -39,6 +39,7 @@ from database import (
     set_awaiting_location,
     save_user_location,
     disable_user_alerts,
+    enable_user_alerts,
     get_user_subscription,
     get_all_enabled_subscriptions
 )
@@ -218,16 +219,27 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not await check_access(update, context):
         return
 
+    # Підтримка команд /alerts on та /alerts off
+    args = context.args
+    if args and len(args) > 0:
+        arg_lower = args[0].lower().strip()
+        if arg_lower in ("on", "1", "start", "enable", "увімк", "увімкнути"):
+            await alerts_on_command(update, context)
+            return
+        elif arg_lower in ("off", "0", "stop", "disable", "вимк", "вимкнути"):
+            await alerts_off_command(update, context)
+            return
+
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
     sub = get_user_subscription(user_id)
     set_awaiting_location(user_id, chat_id, True)
 
-    status_str = "⚪ **Вимкнено**"
+    is_enabled = sub and sub.get("enabled")
+    status_str = "🟢 **Увімкнено**" if is_enabled else "⚪ **Вимкнено**"
     loc_str = "не встановлено"
-    if sub and sub.get("enabled"):
-        status_str = "🟢 **Увімкнено**"
+    if sub and sub.get("oblast"):
         loc_parts = [p for p in [sub.get("locality"), sub.get("raion"), sub.get("oblast")] if p]
         loc_str = ", ".join(loc_parts) if loc_parts else sub.get("oblast", "")
 
@@ -235,9 +247,12 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "🚨 **Налаштування сповіщень про повітряну тривогу**\n\n"
         f"• Статус сповіщень: {status_str}\n"
         f"• Ваша поточна локація: **{loc_str}**\n\n"
-        "📍 **Як прив'язати сповіщення до вашого місця перебування:**\n"
-        "Натисніть велику кнопку **'📍 Надіслати мою геопозицію'** внизу на клавіатурі.\n\n"
-        "Або оберіть потрібну область зі списку вручну кнопкою нижче:"
+        "⚡ **Керування командами:**\n"
+        "• `/alerts_on` — увімкнути сповіщення\n"
+        "• `/alerts_off` — вимкнути сповіщення\n"
+        "• `/map` — переглянути карту тривог\n\n"
+        "📍 **Щоб оновити/прив'язати локацію:**\n"
+        "Натисніть кнопку **'📍 Надіслати мою геопозицію'** на клавіатурі або оберіть область зі списку нижче:"
     )
 
     # Кнопка відправки геопозиції у Reply-клавіатурі
@@ -250,16 +265,49 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         one_time_keyboard=True
     )
 
-    # Інлайн-кнопки швидких дій
+    # Динамічна кнопка Увімкнути / Вимкнути
+    toggle_btn = (
+        InlineKeyboardButton("🔕 Вимкнути сповіщення (/alerts_off)", callback_data="alerts_off")
+        if is_enabled
+        else InlineKeyboardButton("🔔 Увімкнути сповіщення (/alerts_on)", callback_data="alerts_on")
+    )
+
     inline_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")],
         [InlineKeyboardButton("🔍 Перевірити стан тривоги зараз", callback_data="alerts_check")],
         [InlineKeyboardButton("🗺️ Обрати область вручну", callback_data="alerts_manual_page_0")],
-        [InlineKeyboardButton("🔕 Вимкнути сповіщення", callback_data="alerts_off")]
+        [toggle_btn]
     ])
 
     await update.message.reply_text(msg_text, reply_markup=reply_kb, parse_mode="Markdown")
     await update.message.reply_text("Швидкі дії:", reply_markup=inline_kb)
+
+async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await check_access(update, context):
+        return
+
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    if enable_user_alerts(user_id, chat_id):
+        sub = get_user_subscription(user_id)
+        loc_parts = [p for p in [sub.get("locality"), sub.get("raion"), sub.get("oblast")] if p]
+        loc_str = ", ".join(loc_parts) if loc_parts else sub.get("oblast", "")
+        await update.message.reply_text(
+            f"🔔 **Сповіщення про повітряну тривогу успішно УВІМКНЕНО!**\n\n"
+            f"📍 **Регіон моніторингу:** {loc_str}\n\n"
+            "Тепер ви будете оперативно отримувати сповіщення про загрози (🔴 червоний / 🟡 жовтий рівень) та відбої.\n"
+            "Вимкнути можна будь-коли командою `/alerts_off`.",
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            "📍 **У вас ще не встановлено регіон для сповіщень!**\n\n"
+            "Будь ласка, надішліть вашу геопозицію або оберіть область зі списку:",
+            parse_mode="Markdown"
+        )
+        await alerts_command(update, context)
 
 async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -270,8 +318,8 @@ async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     _user_last_alert_state.pop(user_id, None)
 
     await update.message.reply_text(
-        "🔕 **Сповіщення про повітряну тривогу вимкнено.**\n\n"
-        "Ви можете увімкнути їх у будь-який момент командою /alerts.",
+        "🔕 **Сповіщення про повітряну тривогу ВИМКНЕНО.**\n\n"
+        "Ви не отримуватимете автоматичних сповіщень. Увімкнути знову можна командою `/alerts_on` або `/alerts`.",
         reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown"
     )
@@ -687,11 +735,23 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(f"❌ Не вдалося отримати дані з NEPTUN API: `{e}`", parse_mode="Markdown")
         return
 
+    elif choice == "alerts_on":
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        if enable_user_alerts(user_id, chat_id):
+            sub = get_user_subscription(user_id)
+            loc_parts = [p for p in [sub.get("locality"), sub.get("raion"), sub.get("oblast")] if p]
+            loc_str = ", ".join(loc_parts) if loc_parts else sub.get("oblast", "")
+            await query.edit_message_text(f"🔔 **Сповіщення про повітряну тривогу успішно УВІМКНЕНО!**\n\n📍 Регіон: {loc_str}", parse_mode="Markdown")
+        else:
+            await query.edit_message_text("📍 Спочатку вкажіть вашу область (надішліть локацію або оберіть зі списку через команду /alerts).")
+        return
+
     elif choice == "alerts_off":
         user_id = query.from_user.id
         disable_user_alerts(user_id)
         _user_last_alert_state.pop(user_id, None)
-        await query.edit_message_text("🔕 Сповіщення про повітряну тривогу успішно вимкнено.")
+        await query.edit_message_text("🔕 **Сповіщення про повітряну тривогу ВИМКНЕНО.**\n\nУвімкнути знову можна командою /alerts_on.", parse_mode="Markdown")
         return
 
     elif choice.startswith("alerts_manual_page_"):
@@ -828,9 +888,10 @@ def run_dummy_server():
 async def post_init(application: Application) -> None:
     commands = [
         BotCommand("start", "Запустити бота"),
-        BotCommand("alerts", "Сповіщення про тривоги та локація"),
+        BotCommand("alerts", "Налаштування тривог та локація"),
+        BotCommand("alerts_on", "Увімкнути сповіщення"),
+        BotCommand("alerts_off", "Вимкнути сповіщення"),
         BotCommand("map", "Карта тривог України зараз"),
-        BotCommand("alerts_off", "Вимкнути тривоги"),
         BotCommand("help", "Як користуватися та можливості"),
         BotCommand("invite", "Створити запрошення (для адміна)"),
         BotCommand("users", "Список користувачів (для адміна)"),
@@ -866,8 +927,9 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("alerts", alerts_command))
-    application.add_handler(CommandHandler("map", map_command))
+    application.add_handler(CommandHandler("alerts_on", alerts_on_command))
     application.add_handler(CommandHandler("alerts_off", alerts_off_command))
+    application.add_handler(CommandHandler("map", map_command))
     application.add_handler(CommandHandler("invite", invite_command))
     application.add_handler(CommandHandler("users", users_command))
     application.add_handler(CommandHandler("myid", myid_command))

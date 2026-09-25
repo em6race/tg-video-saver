@@ -197,6 +197,29 @@ def disable_user_alerts(user_id: int):
         ''', (now, int(user_id)))
         conn.commit()
 
+def enable_user_alerts(user_id: int, chat_id: int = None) -> bool:
+    """Увімкнути сповіщення про тривоги, якщо область вже була встановлена раніше."""
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT oblast FROM alert_subscriptions WHERE user_id=?", (int(user_id),))
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return False
+        if chat_id:
+            cursor.execute('''
+                UPDATE alert_subscriptions SET enabled=1, awaiting_location=0, chat_id=?, updated_at=?
+                WHERE user_id=?
+            ''', (int(chat_id), now, int(user_id)))
+        else:
+            cursor.execute('''
+                UPDATE alert_subscriptions SET enabled=1, awaiting_location=0, updated_at=?
+                WHERE user_id=?
+            ''', (now, int(user_id)))
+        conn.commit()
+        return True
+
+
 def get_user_subscription(user_id: int) -> dict:
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
