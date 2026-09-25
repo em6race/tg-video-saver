@@ -872,17 +872,24 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logger.error(f"Error handling URL: {e}")
         await update.message.reply_text(f"❌ Сталася помилка при завантаженні відео.\n\nДеталі помилки (перешліть розробнику):\n`{str(e)}`", parse_mode="Markdown")
 
-async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: dict, current_state: dict, is_manual_check: bool = False, prev_level: str = None) -> None:
+async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: dict, current_state: dict, is_manual_check: bool = False, prev_level: str = None, extra_msg_id_to_delete: int = None) -> None:
     """
     Видаляє попереднє повідомлення тривоги та надсилає НОВЕ насамкінець чату.
     Це гарантує, що повідомлення про тривогу ЗАВЖДИ буде найостаннішим у чаті.
     """
     last_msg_id = sub.get("last_alert_msg_id")
+
+    msg_ids_to_delete = set()
     if last_msg_id:
+        msg_ids_to_delete.add(last_msg_id)
+    if extra_msg_id_to_delete:
+        msg_ids_to_delete.add(extra_msg_id_to_delete)
+
+    for m_id in msg_ids_to_delete:
         try:
-            await bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
+            await bot.delete_message(chat_id=chat_id, message_id=m_id)
         except Exception as del_err:
-            logger.debug(f"Could not delete previous alert message {last_msg_id} for user {user_id}: {del_err}")
+            logger.debug(f"Could not delete old alert message {m_id} for user {user_id}: {del_err}")
 
     msg_text = format_alert_message(sub, current_state, is_manual_check=is_manual_check, prev_level=prev_level)
     alert_kb = get_alert_inline_keyboard()
@@ -920,6 +927,8 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
     _user_last_manual_refresh[user_id] = now
     await query.answer("🔄 Оновлюю статус...")
 
+    current_msg_id = query.message.message_id if query.message else None
+
     try:
         alerts_data, threats_data = await fetch_neptun_data(force=True)
         current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
@@ -932,7 +941,8 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
             user_id=user_id,
             sub=sub,
             current_state=current_state,
-            is_manual_check=True
+            is_manual_check=True,
+            extra_msg_id_to_delete=current_msg_id
         )
     except Exception as e:
         logger.warning(f"Error in manual alert refresh: {e}")
