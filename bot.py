@@ -79,7 +79,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Пам'ять та кулдауни для моніторингу та оновлення тривог
-ALERT_REFRESH_COOLDOWN = 15  # Секунди кулдауну для ручного оновлення
+ALERT_REFRESH_COOLDOWN = 3   # Секунди кулдауну для ручного оновлення
 _user_last_alert_state = {}         # user_id -> рівень ("green", "yellow", "red")
 _user_last_threat_signature = {}    # user_id -> кортеж-сигнатура загроз
 _user_last_auto_edit_time = {}      # user_id -> час останнього редагування ботом
@@ -93,6 +93,22 @@ def get_alert_inline_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🗺️ Карта тривог", callback_data="alerts_map_refresh")
         ]
     ])
+
+def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Повертає постійну меню-клавіатуру внизу екрана Telegram."""
+    return ReplyKeyboardMarkup([
+        [
+            KeyboardButton("📊 Статус тривоги"),
+            KeyboardButton("🗺️ Карта тривог")
+        ],
+        [
+            KeyboardButton("🚨 Налаштувати тривоги"),
+            KeyboardButton("❓ Довідка")
+        ],
+        [
+            KeyboardButton("📍 Надіслати мої GPS-координати", request_location=True)
+        ]
+    ], resize_keyboard=True)
 
 async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Перевіряє, чи має користувач доступ до бота (приватний режим)."""
@@ -175,9 +191,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Привіт, {user.first_name}! 👋\n\n"
             "Я ваш персональний бот для завантаження медіа та оперативного моніторингу повітряних тривог 🚀\n\n"
             "📥 **Швидкий старт:**\n"
-            "• Надішліть посилання на будь-яке відео чи трек для швидкого завантаження.\n"
-            "• Натисніть **«🚨 Налаштувати тривоги»**, щоб увімкнути сповіщення для вашого району.",
-            reply_markup=welcome_keyboard,
+            "• Надішліть посилання на будь-яке відео чи трек для завантаження.\n"
+            "• Скористайтесь кнопками меню внизу екрана для перевірки статусу тривог, карти та налаштувань.",
+            reply_markup=get_main_reply_keyboard(),
             parse_mode="Markdown"
         )
     else:
@@ -293,7 +309,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         [InlineKeyboardButton("🚨 Налаштувати тривоги", callback_data="open_alerts")],
         [InlineKeyboardButton("🗺️ Відкрити карту тривог", callback_data="alerts_map_refresh")]
     ])
-    await update.message.reply_text(help_text, reply_markup=quick_kb, parse_mode="Markdown")
+    await update.message.reply_text(help_text, reply_markup=get_main_reply_keyboard(), parse_mode="Markdown")
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -301,14 +317,39 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
-    await update.message.reply_text("⏳ Завантажую оновлення з GitHub і перезавантажуюсь... 🔄")
-    await asyncio.sleep(1)
+    status_msg = await update.message.reply_text("⏳ Завантажую оновлення з GitHub і перезавантажуюсь... 🔄")
+    await asyncio.sleep(0.5)
+
+    git_output = ""
+    pull_success = False
 
     try:
-        subprocess.run(["git", "pull"], check=True)
+        res = subprocess.run(["git", "pull", "origin", "main"], capture_output=True, text=True, check=True)
+        git_output = res.stdout.strip() or "Оновлено успішно."
+        pull_success = True
     except Exception as e:
-        logger.error(f"Git pull failed during restart: {e}")
+        err_detail = getattr(e, 'stderr', str(e)) or str(e)
+        logger.warning(f"Git pull failed during restart: {err_detail}. Attempting git fetch & reset...")
+        try:
+            subprocess.run(["git", "fetch", "origin", "main"], capture_output=True, text=True, check=True)
+            res_reset = subprocess.run(["git", "reset", "--hard", "origin/main"], capture_output=True, text=True, check=True)
+            git_output = f"Скинуто до origin/main: {res_reset.stdout.strip()}"
+            pull_success = True
+        except Exception as reset_err:
+            git_output = f"Помилка pull: {err_detail}\nПомилка reset: {reset_err}"
 
+    if pull_success:
+        try:
+            await status_msg.edit_text(f"✅ **Оновлено з GitHub:**\n`{git_output[:300]}`\n\nПерезапуск бота... 🔄", parse_mode="Markdown")
+        except Exception:
+            pass
+    else:
+        try:
+            await status_msg.edit_text(f"⚠️ **Не вдалося оновити код:**\n`{git_output[:300]}`\n\nПерезапуск на поточній версії... 🔄", parse_mode="Markdown")
+        except Exception:
+            pass
+
+    await asyncio.sleep(1)
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 # --- ПОВІТРЯНІ ТРИВОГИ ТА ГЕОЛОКАЦІЯ ---
@@ -925,27 +966,63 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
         return
 
     _user_last_manual_refresh[user_id] = now
-    await query.answer("🔄 Оновлюю статус...")
-
     current_msg_id = query.message.message_id if query.message else None
+    last_stored_msg_id = sub.get("last_alert_msg_id")
 
     try:
         alerts_data, threats_data = await fetch_neptun_data(force=True)
         current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
-        _user_last_alert_state[user_id] = current_state["level"]
-        _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
-        await repost_alert_message_to_bottom(
-            bot=query.message.bot,
-            chat_id=query.message.chat_id,
-            user_id=user_id,
-            sub=sub,
-            current_state=current_state,
-            is_manual_check=True,
-            extra_msg_id_to_delete=current_msg_id
-        )
+        prev_sig = _user_last_threat_signature.get(user_id)
+        current_sig = make_threat_signature(current_state)
+
+        _user_last_alert_state[user_id] = current_state["level"]
+        _user_last_threat_signature[user_id] = current_sig
+
+        msg_text = format_alert_message(sub, current_state, is_manual_check=True)
+        alert_kb = get_alert_inline_keyboard()
+
+        # Якщо натиснуте повідомлення є останнім у чаті — редагуємо його М'ЯКО на місці без посмикувань/видалення!
+        is_same_as_last = (current_msg_id == last_stored_msg_id)
+        edited_inplace = False
+
+        if is_same_as_last and current_msg_id:
+            try:
+                await query.edit_message_text(
+                    text=msg_text,
+                    reply_markup=alert_kb,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
+                edited_inplace = True
+            except Exception as edit_err:
+                logger.debug(f"In-place edit on refresh failed ({edit_err}), falling back to repost...")
+                edited_inplace = False
+
+        # Якщо повідомлення було застаріле або не в самому кінці чату — видаляємо і відправляємо наперед
+        if not edited_inplace:
+            await repost_alert_message_to_bottom(
+                bot=query.get_bot(),
+                chat_id=query.message.chat_id,
+                user_id=user_id,
+                sub=sub,
+                current_state=current_state,
+                is_manual_check=True,
+                extra_msg_id_to_delete=current_msg_id
+            )
+
+        now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
+        if current_sig != prev_sig:
+            await query.answer(f"🚨 Є оновлення у небі! ({now_tz})", show_alert=False)
+        else:
+            await query.answer(f"✅ Оновлено ({now_tz})", show_alert=False)
+
     except Exception as e:
-        logger.warning(f"Error in manual alert refresh: {e}")
+        logger.error(f"Error in manual alert refresh: {e}", exc_info=True)
+        try:
+            await query.answer(f"❌ Не вдалося оновити статус: {e}", show_alert=True)
+        except Exception:
+            pass
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /status або /check для ручної перевірки ситуації з кулдауном."""
@@ -1282,6 +1359,19 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         return
 
+    if text in ("📊 Статус тривоги", "Статус тривоги", "/status", "/check"):
+        await status_command(update, context)
+        return
+    elif text in ("🗺️ Карта тривог", "Карта тривог", "/map"):
+        await map_command(update, context)
+        return
+    elif text in ("🚨 Налаштувати тривоги", "Налаштувати тривоги", "/alerts"):
+        await alerts_command(update, context)
+        return
+    elif text in ("❓ Довідка", "❓ Довідка та допомога", "Довідка", "/help"):
+        await help_command(update, context)
+        return
+
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     sub = get_user_subscription(user_id)
@@ -1299,14 +1389,15 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"❌ Не вдалося знайти населений пункт «{text}» в Україні 🇺🇦\n\n"
                 "Спробуйте:\n"
                 "• Написати назву точніше (наприклад: *Бровари*, *м. Одеса*, *с. Софіївська Борщагівка*)\n"
-                "• Або натиснути кнопку **«📍 Надіслати мою геопозицію»**\n"
+                "• Або натиснути кнопку **«📍 Надіслати мої GPS-координати»**\n"
                 "• Або оберіть область вручну у /alerts",
                 parse_mode="Markdown"
             )
             return
 
     await update.message.reply_text(
-        "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram тощо) або скористайтеся командою /alerts, щоб налаштувати локацію для сповіщень про тривоги 🚨"
+        "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram тощо) або скористайтеся меню кнопок нижче 🚨",
+        reply_markup=get_main_reply_keyboard()
     )
 
 # --- ФОНОВИЙ МОНІТОРИНГ ТРИВОГ (NEPTUN API) ---
@@ -1350,7 +1441,7 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                 )
                             continue
 
-                        # Автоматично надсилаємо/пересилаємо сповіщення ТІЛЬКИ при зміні статусу/рівня тривоги
+                        # Автоматично надсилаємо/пересилаємо сповіщення при зміні рівнів
                         if curr_level != prev_level:
                             _user_last_alert_state[user_id] = curr_level
                             _user_last_threat_signature[user_id] = current_sig
@@ -1365,6 +1456,34 @@ async def alerts_monitoring_loop(application: Application) -> None:
                                 is_manual_check=False,
                                 prev_level=prev_level
                             )
+                        # Якщо рівень тривоги той самий (🔴/🟡), але змінилися цілі у небі (не частіше ніж раз на 60 сек)
+                        elif curr_level != "green":
+                            if (current_sig != prev_sig) and (now - last_auto_edit >= 60):
+                                _user_last_threat_signature[user_id] = current_sig
+                                _user_last_auto_edit_time[user_id] = now
+
+                                msg_text = format_alert_message(sub, current_state, is_manual_check=False, prev_level=prev_level)
+                                if last_msg_id:
+                                    try:
+                                        await application.bot.edit_message_text(
+                                            chat_id=chat_id,
+                                            message_id=last_msg_id,
+                                            text=msg_text,
+                                            reply_markup=alert_kb,
+                                            parse_mode="Markdown",
+                                            disable_web_page_preview=True
+                                        )
+                                    except Exception as edit_err:
+                                        logger.debug(f"In-place edit failed ({edit_err}), reposting...")
+                                        await repost_alert_message_to_bottom(
+                                            bot=application.bot,
+                                            chat_id=chat_id,
+                                            user_id=user_id,
+                                            sub=sub,
+                                            current_state=current_state,
+                                            is_manual_check=False,
+                                            prev_level=prev_level
+                                        )
 
         except Exception as e:
             logger.error(f"Error in alerts monitoring loop: {e}")

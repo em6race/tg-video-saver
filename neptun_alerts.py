@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import math
 import aiohttp
@@ -90,6 +91,18 @@ def _heading_to_direction(heading: float) -> tuple[str, str]:
         if low <= h < high or (low == 337.5 and h >= 337.5):
             return name, arrow
     return "Північ", "↑"
+
+def _clean_threat_explanation(text: str) -> str:
+    if not text:
+        return "БпЛА"
+    cleaned = re.sub(r'\.?\s*Підтверджень:\s*\d+\.?', '', text, flags=re.IGNORECASE).strip()
+    cleaned = cleaned.rstrip(".")
+    return cleaned if cleaned else "БпЛА"
+
+def _escape_markdown(text: str) -> str:
+    if not text:
+        return ""
+    return str(text).replace("*", "\\*").replace("_", "\\_").replace("`", "\\`").replace("[", "\\[")
 
 def _normalize_apostrophe(text: str) -> str:
     if not text:
@@ -529,6 +542,15 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         direction_name = None
         direction_arrow = None
         is_towards_user = False
+        relative_dir_name = None
+        relative_dir_arrow = None
+
+        if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None:
+            try:
+                bearing_from_user = calculate_bearing(user_lat, user_lon, t_lat, t_lon)
+                relative_dir_name, relative_dir_arrow = _heading_to_direction(bearing_from_user)
+            except Exception:
+                pass
 
         if heading_raw is not None:
             try:
@@ -551,12 +573,14 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
                 "id": t.get("id"),
                 "type": t.get("type", "unknown"),
                 "title": t.get("title", "Повітряна ціль"),
-                "explanation": t.get("explanationShort") or t.get("title", "Зафіксовано ціль"),
+                "explanation": _clean_threat_explanation(t.get("explanationShort") or t.get("title", "Зафіксовано ціль")),
                 "distance_km": dist_km,
                 "advisory": bool(t.get("advisory", False)),
                 "heading": heading_deg,
                 "direction_name": direction_name,
                 "direction_arrow": direction_arrow,
+                "relative_dir_name": relative_dir_name,
+                "relative_dir_arrow": relative_dir_arrow,
                 "is_towards_user": is_towards_user
             })
 
@@ -586,6 +610,30 @@ def _format_kyiv_time(iso_str: str = None) -> str:
         except Exception:
             pass
     return datetime.now(tz).strftime("%H:%M")
+
+def _format_alert_time_and_duration(iso_str: str = None) -> str:
+    tz = pytz.timezone("Europe/Kiev")
+    now_dt = datetime.now(tz)
+    if not iso_str:
+        return now_dt.strftime("%H:%M")
+
+    try:
+        start_dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00")).astimezone(tz)
+        diff_sec = max(0, int((now_dt - start_dt).total_seconds()))
+        hours = diff_sec // 3600
+        minutes = (diff_sec % 3600) // 60
+
+        if hours > 0:
+            dur_str = f"{hours} год {minutes} хв"
+        elif minutes > 0:
+            dur_str = f"{minutes} хв"
+        else:
+            dur_str = "< 1 хв"
+
+        start_time_str = start_dt.strftime("%H:%M")
+        return f"{dur_str} (з {start_time_str})"
+    except Exception:
+        return now_dt.strftime("%H:%M")
 
 def make_threat_signature(state: dict) -> tuple:
     """
@@ -622,7 +670,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     level = state["level"]
     reasons = state["reasons"]
     threats = state["nearby_threats"]
-    time_str = _format_kyiv_time(state.get("since"))
+    duration_str = _format_alert_time_and_duration(state.get("since"))
 
     lines = []
 
@@ -633,7 +681,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
             lines.append("🔴 **ПОВІТРЯНА ТРИВОГА! (Червоний рівень)** 🚨")
         lines.append(f"📍 **Локація:** {loc_display}")
         lines.append(f"❓ **Чому тривога:** {', '.join(reasons)}")
-        lines.append(f"🕒 **Триває з:** {time_str}")
+        lines.append(f"🕒 **Тривога триває:** {duration_str}")
     elif level == "yellow":
         if prev_level == "red" and not is_manual_check:
             lines.append("🟡 **Рівень загрози знижено до ЖОВТОГО (Підвищена увага)** ⚠️")
@@ -641,7 +689,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
             lines.append("🟡 **ПІДВИЩЕНА НЕБЕЗПЕКА! (Жовтий рівень)** ⚠️")
         lines.append(f"📍 **Локація:** {loc_display}")
         lines.append(f"❓ **Причина:** {', '.join(reasons)}")
-        lines.append(f"🕒 **Початок:** {time_str}")
+        lines.append(f"🕒 **Загроза триває:** {duration_str}")
     else:
         if is_manual_check:
             lines.append("🟢 **Наразі у вашому районі СПОКІЙНО (Тривоги немає)** ✅")
@@ -653,17 +701,30 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
 
     if threats:
         lines.append("\n🛸 **Зафіксовані цілі поруч / в області:**")
+        towards_count = 0
         for t in threats:
             dist_str = f" *(~{t['distance_km']} км від вас)*" if t.get("distance_km") is not None else ""
+
+            relative_info = ""
+            if t.get("relative_dir_name") and t.get("relative_dir_arrow"):
+                relative_info = f"від вас: {t['relative_dir_arrow']} {t['relative_dir_name']}"
+
             heading_info = ""
-            if t.get("heading") is not None and t.get("direction_name"):
-                heading_info = f" | курс {t['direction_arrow']} {t['direction_name']} ({t['heading']}°)"
+            if t.get("direction_name") and t.get("direction_arrow"):
+                heading_info = f"курс {t['direction_arrow']} {t['direction_name']}"
 
-            towards_warn = ""
             if t.get("is_towards_user"):
-                towards_warn = "\n  ⚠️ **МОЖЛИВА НЕБЕЗПЕКА: Вектор руху цілі спрямований у ваш бік!**"
+                towards_count += 1
 
-            lines.append(f"• {t['explanation']}{dist_str}{heading_info}{towards_warn}")
+            clean_expl = _escape_markdown(t['explanation'])
+            lines.append(f"• **{clean_expl}**{dist_str}")
+            details = [d for d in [relative_info, heading_info] if d]
+            if details:
+                lines.append(f"  🧭 {' | '.join(details)}")
+
+        if towards_count > 0:
+            count_str = "1 цілі" if towards_count == 1 else f"{towards_count} цілей"
+            lines.append(f"\n⚠️ **МОЖЛИВА НЕБЕЗПЕКА: Вектор руху {count_str} спрямований у ваш бік!**")
 
     if level == "red":
         lines.append("\n🙏 *Будь ласка, перебувайте в укритті або дотримуйтесь правила двох стін!*")
