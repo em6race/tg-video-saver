@@ -41,6 +41,7 @@ class ThreatItem:
     relative_dir_name: Optional[str]
     relative_dir_arrow: Optional[str]
     is_towards_user: bool
+    confidence: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -59,7 +60,8 @@ class ThreatItem:
             direction_arrow=data.get("direction_arrow"),
             relative_dir_name=data.get("relative_dir_name"),
             relative_dir_arrow=data.get("relative_dir_arrow"),
-            is_towards_user=bool(data.get("is_towards_user", False))
+            is_towards_user=bool(data.get("is_towards_user", False)),
+            confidence=data.get("confidence")
         )
 
 @dataclass
@@ -167,6 +169,20 @@ def _normalize_apostrophe(text: str) -> str:
     if not text:
         return ""
     return text.replace("’", "'").replace("`", "'").replace("ʼ", "'").strip()
+
+def _format_confidence(conf_raw: str) -> Optional[str]:
+    if not conf_raw:
+        return None
+    c = str(conf_raw).lower().strip()
+    if c in ("high", "висока"):
+        return "Висока"
+    elif c in ("medium", "середня"):
+        return "Середня"
+    elif c in ("low", "низька"):
+        return "Низька"
+    elif c in ("unconfirmed", "непідтверджена"):
+        return "Непідтверджена"
+    return str(conf_raw).capitalize()
 
 async def reverse_geocode(lat: float, lon: float) -> dict:
     """
@@ -657,6 +673,9 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
                     loc_str += f", {region}"
                 cleaned_expl = f"{cleaned_expl} — {loc_str}"
 
+            conf_raw = t.get("displayConfidence") or t.get("confidenceLevel") or t.get("confidence")
+            conf_display = _format_confidence(conf_raw)
+
             threat_item = ThreatItem(
                 id=t.get("id"),
                 type=t.get("type", "unknown"),
@@ -669,7 +688,8 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
                 direction_arrow=direction_arrow,
                 relative_dir_name=relative_dir_name,
                 relative_dir_arrow=relative_dir_arrow,
-                is_towards_user=is_towards_user
+                is_towards_user=is_towards_user,
+                confidence=conf_display
             )
             nearby_threats.append(threat_item)
 
@@ -803,12 +823,16 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
             if t.get("direction_name") and t.get("direction_arrow"):
                 heading_info = f"курс {t['direction_arrow']} {t['direction_name']}"
 
+            conf_info = ""
+            if t.get("confidence"):
+                conf_info = f"достовірність: {t['confidence']}"
+
             if t.get("is_towards_user"):
                 towards_count += 1
 
             clean_expl = _escape_markdown(t['explanation'])
             lines.append(f"\n• **{clean_expl}**{dist_str}")
-            details = [d for d in [relative_info, heading_info] if d]
+            details = [d for d in [relative_info, heading_info, conf_info] if d]
             if details:
                 lines.append(f"  ↳ {' | '.join(details)}")
 
