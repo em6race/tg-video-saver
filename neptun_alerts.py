@@ -538,7 +538,7 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
                 if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None:
                     bearing_to_user = calculate_bearing(t_lat, t_lon, user_lat, user_lon)
                     angle_diff = abs((heading_deg - bearing_to_user + 180.0) % 360.0 - 180.0)
-                    if angle_diff <= 45.0 and (dist_km is not None and dist_km <= 150):
+                    if angle_diff <= 45.0 and (dist_km is not None and dist_km <= 15):
                         is_towards_user = True
             except Exception as ge_err:
                 logger.debug(f"Heading calc error: {ge_err}")
