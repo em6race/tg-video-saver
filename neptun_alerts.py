@@ -160,6 +160,12 @@ def _clean_threat_explanation(text: str) -> str:
     cleaned = cleaned.rstrip(".")
     return cleaned if cleaned else "БпЛА"
 
+def _clean_reason(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = re.sub(r'\s*\((?:жовтий|червоний|зелений)\s+рівень\)', '', text, flags=re.IGNORECASE)
+    return cleaned.strip()
+
 def _escape_markdown(text: str) -> str:
     if not text:
         return ""
@@ -697,9 +703,9 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
 
     if level != "green" and not reasons:
         if level == "red":
-            reasons.append("Ракетна або дронова загроза (червоний рівень)")
+            reasons.append("Ракетна або дронова загроза")
         else:
-            reasons.append("Підвищена небезпека (жовтий рівень)")
+            reasons.append("Підвищена небезпека")
 
     state_obj = AlertStateData(
         active=level in ("red", "yellow"),
@@ -782,6 +788,14 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     threats = state["nearby_threats"]
     duration_str = _format_alert_time_and_duration(state.get("since"))
 
+    cleaned_reasons = []
+    for r in reasons:
+        cr = _clean_reason(r)
+        if cr and cr not in cleaned_reasons:
+            cleaned_reasons.append(cr)
+
+    reasons_str = ", ".join(cleaned_reasons) if cleaned_reasons else ("Ракетна або дронова загроза" if level == "red" else "Підвищена небезпека")
+
     lines = []
 
     if level == "red":
@@ -790,7 +804,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         else:
             lines.append("🔴 **ПОВІТРЯНА ТРИВОГА! (Червоний рівень)** 🚨")
         lines.append(f"📍 **Локація:** {loc_display}")
-        lines.append(f"❓ **Чому тривога:** {', '.join(reasons)}")
+        lines.append(f"❓ **Чому тривога:** {reasons_str}")
         lines.append(f"🕒 **Тривога триває:** {duration_str}")
     elif level == "yellow":
         if prev_level == "red" and not is_manual_check:
@@ -798,7 +812,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         else:
             lines.append("🟡 **ПІДВИЩЕНА НЕБЕЗПЕКА! (Жовтий рівень)** ⚠️")
         lines.append(f"📍 **Локація:** {loc_display}")
-        lines.append(f"❓ **Причина:** {', '.join(reasons)}")
+        lines.append(f"❓ **Причина:** {reasons_str}")
         lines.append(f"🕒 **Загроза триває:** {duration_str}")
     else:
         if is_manual_check:
