@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 from handlers.common import myid_command, help_command, error_handler
+from handlers.admin import start
 from handlers.alerts import (
     alerts_command,
     status_command,
@@ -80,7 +81,7 @@ def main() -> None:
     application.add_error_handler(error_handler)
 
     # Команди бота тривог
-    application.add_handler(CommandHandler("start", alerts_command))
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("alerts", alerts_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("check", status_command))
