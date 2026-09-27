@@ -16,8 +16,6 @@ class ThreatItem:
     relative_dir_arrow: Optional[str]
     is_towards_user: bool
     confidence: Optional[str] = None
-    is_new: bool = False
-    short_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -37,9 +35,7 @@ class ThreatItem:
             relative_dir_name=data.get("relative_dir_name"),
             relative_dir_arrow=data.get("relative_dir_arrow"),
             is_towards_user=bool(data.get("is_towards_user", False)),
-            confidence=data.get("confidence"),
-            is_new=bool(data.get("is_new", False)),
-            short_id=data.get("short_id")
+            confidence=data.get("confidence")
         )
 
 @dataclass
@@ -50,7 +46,6 @@ class AlertStateData:
     since: Optional[str]
     matched_names: List[str]
     nearby_threats: List[ThreatItem] = field(default_factory=list)
-    current_threat_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -59,8 +54,7 @@ class AlertStateData:
             "reasons": self.reasons,
             "since": self.since,
             "matched_names": self.matched_names,
-            "nearby_threats": [t.to_dict() if isinstance(t, ThreatItem) else t for t in self.nearby_threats],
-            "current_threat_ids": self.current_threat_ids
+            "nearby_threats": [t.to_dict() if isinstance(t, ThreatItem) else t for t in self.nearby_threats]
         }
 
 UKRAINE_OBLASTS = [

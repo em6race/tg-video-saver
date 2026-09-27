@@ -29,7 +29,6 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
     _user_last_manual_refresh,
-    _user_last_threat_ids,
 )
 from handlers.alerts.location import prompt_location_confirmation
 from handlers.alerts.monitoring import repost_alert_message_to_bottom
@@ -224,9 +223,7 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
 
     try:
         alerts_data, threats_data = await fetch_neptun_data(force=True)
-        prev_threat_ids = _user_last_threat_ids.get(user_id)
-        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, prev_threat_ids=prev_threat_ids)
-        _user_last_threat_ids[user_id] = set(current_state.get("current_threat_ids", []))
+        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
 
         prev_sig = _user_last_threat_signature.get(user_id)
         current_sig = make_threat_signature(current_state)
@@ -309,9 +306,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         alerts_data, threats_data = await fetch_neptun_data(force=True)
-        prev_threat_ids = _user_last_threat_ids.get(user_id)
-        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, prev_threat_ids=prev_threat_ids)
-        _user_last_threat_ids[user_id] = set(current_state.get("current_threat_ids", []))
+        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
         _user_last_alert_state[user_id] = current_state["level"]
         _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 

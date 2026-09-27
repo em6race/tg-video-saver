@@ -34,7 +34,6 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
     _user_last_manual_refresh,
-    _user_last_threat_ids,
 )
 from handlers.alerts.location import (
     prompt_location_confirmation,
@@ -87,9 +86,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if sub and sub.get("oblast"):
             try:
                 alerts_data, threats_data = await fetch_neptun_data()
-                prev_threat_ids = _user_last_threat_ids.get(user_id)
-                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, prev_threat_ids=prev_threat_ids)
-                _user_last_threat_ids[user_id] = set(current_state.get("current_threat_ids", []))
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
                 _user_last_alert_state[user_id] = current_state["level"]
                 _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
@@ -133,9 +130,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if sub and sub.get("oblast"):
             try:
                 alerts_data, threats_data = await fetch_neptun_data()
-                prev_threat_ids = _user_last_threat_ids.get(user_id)
-                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, prev_threat_ids=prev_threat_ids)
-                _user_last_threat_ids[user_id] = set(current_state.get("current_threat_ids", []))
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
                 _user_last_alert_state[user_id] = current_state["level"]
                 _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
@@ -325,9 +320,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if sub and sub.get("oblast"):
             try:
                 alerts_data, threats_data = await fetch_neptun_data()
-                prev_threat_ids = _user_last_threat_ids.get(user_id)
-                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, prev_threat_ids=prev_threat_ids)
-                _user_last_threat_ids[user_id] = set(current_state.get("current_threat_ids", []))
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
                 _user_last_alert_state[user_id] = current_state["level"]
                 _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
@@ -374,9 +367,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             alerts_data, threats_data = await fetch_neptun_data()
             sub = await get_user_subscription(user_id)
-            prev_threat_ids = _user_last_threat_ids.get(user_id)
-            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, prev_threat_ids=prev_threat_ids)
-            _user_last_threat_ids[user_id] = set(current_state.get("current_threat_ids", []))
+            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
             _user_last_alert_state[user_id] = current_state["level"]
             _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 

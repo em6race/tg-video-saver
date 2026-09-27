@@ -112,10 +112,8 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     if threats:
         lines.append("\n🛸 **Зафіксовані цілі поруч / в області:**")
         towards_count = 0
-        for idx, t in enumerate(threats, 1):
+        for t in threats:
             dist_str = f" *(~{t['distance_km']} км від вас)*" if t.get("distance_km") is not None else ""
-            status_badge = " 🆕 **[НОВА ЦІЛЬ]**" if t.get("is_new") else " 📍 **[В НЕБІ]**"
-            id_badge = f" `#{t['short_id']}`" if t.get("short_id") else ""
 
             relative_info = ""
             if t.get("relative_dir_name") and t.get("relative_dir_arrow"):
@@ -133,7 +131,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
                 towards_count += 1
 
             clean_expl = _escape_markdown(t['explanation'])
-            lines.append(f"\n• **Ціль #{idx}**{id_badge}{status_badge}\n  ↳ **{clean_expl}**{dist_str}")
+            lines.append(f"\n• **{clean_expl}**{dist_str}")
             details = [d for d in [relative_info, heading_info, conf_info] if d]
             if details:
                 lines.append(f"  ↳ {' | '.join(details)}")

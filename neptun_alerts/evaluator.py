@@ -59,7 +59,7 @@ def _match_oblast(user_oblast: str, api_oblast: str) -> bool:
     a_norm = _normalize_apostrophe(api_oblast).lower().replace("область", "").replace("м.", "").replace("місто", "").strip()
     return u_norm == a_norm or (u_norm and (u_norm in a_norm or a_norm in u_norm))
 
-def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, prev_threat_ids: set = None) -> dict:
+def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) -> dict:
     """
     Аналізує дані NEPTUN для конкретного користувача та визначає:
     - Чи є тривога (active: bool)
@@ -178,13 +178,6 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
             conf_raw = t.get("displayConfidence") or t.get("confidenceLevel") or t.get("confidence")
             conf_display = _format_confidence(conf_raw)
 
-            raw_id = str(t.get("id") or "")
-            short_id = raw_id.replace("trk_", "").strip() if raw_id else ""
-            if len(short_id) > 6:
-                short_id = short_id[-6:]
-
-            is_new = bool(prev_threat_ids is not None and raw_id and raw_id not in prev_threat_ids)
-
             threat_item = ThreatItem(
                 id=t.get("id"),
                 type=t.get("type", "unknown"),
@@ -198,9 +191,7 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
                 relative_dir_name=relative_dir_name,
                 relative_dir_arrow=relative_dir_arrow,
                 is_towards_user=is_towards_user,
-                confidence=conf_display,
-                is_new=is_new,
-                short_id=short_id
+                confidence=conf_display
             )
             nearby_threats.append(threat_item)
 
@@ -212,15 +203,12 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
         else:
             reasons.append("Підвищена небезпека")
 
-    current_ids = [str(t.id) for t in nearby_threats if t.id]
-
     state_obj = AlertStateData(
         active=level in ("red", "yellow"),
         level=level,
         reasons=reasons,
         since=since_time,
         matched_names=matched_names,
-        nearby_threats=nearby_threats[:5],
-        current_threat_ids=current_ids
+        nearby_threats=nearby_threats[:5]
     )
     return state_obj.to_dict()
