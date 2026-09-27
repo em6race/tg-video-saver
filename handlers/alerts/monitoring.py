@@ -19,6 +19,7 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
     _user_last_auto_edit_time,
+    _user_last_threat_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,9 @@ async def alerts_monitoring_loop(application) -> None:
                         chat_id = sub["chat_id"]
                         last_msg_id = sub.get("last_alert_msg_id")
 
-                        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+                        prev_threat_ids = _user_last_threat_ids.get(user_id)
+                        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, prev_threat_ids=prev_threat_ids)
+                        _user_last_threat_ids[user_id] = set(current_state.get("current_threat_ids", []))
                         curr_level = current_state["level"]
                         prev_level = _user_last_alert_state.get(user_id)
                         current_sig = make_threat_signature(current_state)

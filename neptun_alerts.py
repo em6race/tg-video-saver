@@ -42,6 +42,8 @@ class ThreatItem:
     relative_dir_arrow: Optional[str]
     is_towards_user: bool
     confidence: Optional[str] = None
+    is_new: bool = False
+    short_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -61,7 +63,9 @@ class ThreatItem:
             relative_dir_name=data.get("relative_dir_name"),
             relative_dir_arrow=data.get("relative_dir_arrow"),
             is_towards_user=bool(data.get("is_towards_user", False)),
-            confidence=data.get("confidence")
+            confidence=data.get("confidence"),
+            is_new=bool(data.get("is_new", False)),
+            short_id=data.get("short_id")
         )
 
 @dataclass
@@ -72,6 +76,7 @@ class AlertStateData:
     since: Optional[str]
     matched_names: List[str]
     nearby_threats: List[ThreatItem] = field(default_factory=list)
+    current_threat_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -80,7 +85,8 @@ class AlertStateData:
             "reasons": self.reasons,
             "since": self.since,
             "matched_names": self.matched_names,
-            "nearby_threats": [t.to_dict() if isinstance(t, ThreatItem) else t for t in self.nearby_threats]
+            "nearby_threats": [t.to_dict() if isinstance(t, ThreatItem) else t for t in self.nearby_threats],
+            "current_threat_ids": self.current_threat_ids
         }
 
 UKRAINE_OBLASTS = [
@@ -563,7 +569,7 @@ def _match_oblast(user_oblast: str, api_oblast: str) -> bool:
     a_norm = _normalize_apostrophe(api_oblast).lower().replace("область", "").replace("м.", "").replace("місто", "").strip()
     return u_norm == a_norm or (u_norm and (u_norm in a_norm or a_norm in u_norm))
 
-def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) -> dict:
+def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, prev_threat_ids: set = None) -> dict:
     """
     Аналізує дані NEPTUN для конкретного користувача та визначає:
     - Чи є тривога (active: bool)
@@ -682,6 +688,13 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
             conf_raw = t.get("displayConfidence") or t.get("confidenceLevel") or t.get("confidence")
             conf_display = _format_confidence(conf_raw)
 
+            raw_id = str(t.get("id") or "")
+            short_id = raw_id.replace("trk_", "").strip() if raw_id else ""
+            if len(short_id) > 6:
+                short_id = short_id[-6:]
+
+            is_new = bool(prev_threat_ids is not None and raw_id and raw_id not in prev_threat_ids)
+
             threat_item = ThreatItem(
                 id=t.get("id"),
                 type=t.get("type", "unknown"),
@@ -695,7 +708,9 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
                 relative_dir_name=relative_dir_name,
                 relative_dir_arrow=relative_dir_arrow,
                 is_towards_user=is_towards_user,
-                confidence=conf_display
+                confidence=conf_display,
+                is_new=is_new,
+                short_id=short_id
             )
             nearby_threats.append(threat_item)
 
@@ -707,13 +722,16 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         else:
             reasons.append("Підвищена небезпека")
 
+    current_ids = [str(t.id) for t in nearby_threats if t.id]
+
     state_obj = AlertStateData(
         active=level in ("red", "yellow"),
         level=level,
         reasons=reasons,
         since=since_time,
         matched_names=matched_names,
-        nearby_threats=nearby_threats[:5]
+        nearby_threats=nearby_threats[:5],
+        current_threat_ids=current_ids
     )
     return state_obj.to_dict()
 
@@ -826,8 +844,10 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     if threats:
         lines.append("\n🛸 **Зафіксовані цілі поруч / в області:**")
         towards_count = 0
-        for t in threats:
+        for idx, t in enumerate(threats, 1):
             dist_str = f" *(~{t['distance_km']} км від вас)*" if t.get("distance_km") is not None else ""
+            status_badge = " 🆕 **[НОВА ЦІЛЬ]**" if t.get("is_new") else " 📍 **[В НЕБІ]**"
+            id_badge = f" `#{t['short_id']}`" if t.get("short_id") else ""
 
             relative_info = ""
             if t.get("relative_dir_name") and t.get("relative_dir_arrow"):
@@ -845,7 +865,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
                 towards_count += 1
 
             clean_expl = _escape_markdown(t['explanation'])
-            lines.append(f"\n• **{clean_expl}**{dist_str}")
+            lines.append(f"\n• **Ціль #{idx}**{id_badge}{status_badge}\n  ↳ **{clean_expl}**{dist_str}")
             details = [d for d in [relative_info, heading_info, conf_info] if d]
             if details:
                 lines.append(f"  ↳ {' | '.join(details)}")

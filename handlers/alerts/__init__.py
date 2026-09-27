@@ -1,6 +1,7 @@
 from .state import (
     _user_last_alert_state,
     _user_last_threat_signature,
+    _user_last_threat_ids,
     _user_last_auto_edit_time,
     _user_last_manual_refresh,
 )
@@ -31,6 +32,7 @@ from .callbacks import (
 __all__ = [
     "_user_last_alert_state",
     "_user_last_threat_signature",
+    "_user_last_threat_ids",
     "_user_last_auto_edit_time",
     "_user_last_manual_refresh",
     "prompt_location_confirmation",
