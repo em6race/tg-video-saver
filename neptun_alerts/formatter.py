@@ -131,7 +131,10 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
                 towards_count += 1
 
             clean_expl = _escape_markdown(t['explanation'])
-            lines.append(f"\n• **{clean_expl}**{dist_str}")
+            if t.get("advisory") or "ппо" in clean_expl.lower():
+                lines.append(f"\n🛡️ **{clean_expl}**{dist_str}")
+            else:
+                lines.append(f"\n• **{clean_expl}**{dist_str}")
             details = [d for d in [relative_info, heading_info, conf_info] if d]
             if details:
                 lines.append(f"  ↳ {' | '.join(details)}")
@@ -140,7 +143,15 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
             count_str = "1 цілі" if towards_count == 1 else f"{towards_count} цілей"
             lines.append(f"\n⚠️ **МОЖЛИВА НЕБЕЗПЕКА: Вектор руху {count_str} спрямований у ваш бік!**")
 
-    if level == "red":
+    has_ballistics = any(
+        (t.get("type") in ("ballistic", "mig31k", "kinzhal")) or
+        any(w in (t.get("explanation") or "").lower() for w in ["баліст", "кинжал", "кинджал"])
+        for t in threats
+    ) or any(w in reasons_str.lower() for w in ["баліст", "кинжал", "кинджал"])
+
+    if has_ballistics and level == "red":
+        lines.append("\n💥 🛡️ **УВАГА: При загрозі балістики/гіперзвуку можлива активна робота ППО!** Перебувайте в укриттях через високу швидкість та загрозу падіння уламків!")
+    elif level == "red":
         lines.append("\n🙏 *Будь ласка, перебувайте в укритті або дотримуйтесь правила двох стін!*")
 
     now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
