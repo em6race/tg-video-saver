@@ -149,10 +149,13 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         for t in threats
     ) or any(w in reasons_str.lower() for w in ["баліст", "кинжал", "кинджал"])
 
-    if has_ballistics and level == "red":
-        lines.append("\n💥 🛡️ **УВАГА: При загрозі балістики/гіперзвуку можлива активна робота ППО!** Перебувайте в укриттях через високу швидкість та загрозу падіння уламків!")
-    elif level == "red":
-        lines.append("\n🙏 *Будь ласка, перебувайте в укритті або дотримуйтесь правила двох стін!*")
+    if level == "red":
+        if has_ballistics:
+            lines.append("\n💥 🛡️ **УВАГА: При загрозі балістики/гіперзвуку можлива активна робота ППО!** Перебувайте в укриттях через критично високу швидкість цілей та загрозу падіння уламків! 🙏")
+        else:
+            lines.append("\n🛡️ 💥 **УВАГА: Можлива робота ППО!** Будь ласка, перебувайте в укриттях або дотримуйтесь правила двох стін через загрозу вибухової хвилі та падіння уламків! 🙏")
+    elif level == "yellow":
+        lines.append("\n⚠️ *Будь ласка, будьте уважні та стежте за оновленнями ситуації!*")
 
     now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
     lines.append(f"\n⏱ **Оновлено:** {now_tz}")
