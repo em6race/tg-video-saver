@@ -146,14 +146,23 @@ async def generate_alerts_map_image(alerts_data: dict, threats_data: dict, user_
         tx, ty = project(t_lon, t_lat)
         t_type = t.get("type", "uav")
 
-        # Колір маркера цілі: ракети/балістика — яскраво-пурпуровий/білий, БпЛА — помаранчево-жовтий
         raw_t_title = (t.get("explanationShort") or t.get("title") or "").lower()
-        if t_type in ("missile", "ballistic", "kab", "mig31k", "jet_uav") or "реактивн" in raw_t_title:
-            marker_col = (255, 50, 220)
-        elif t_type == "recon":
-            marker_col = (80, 200, 255)
+        if t_type in ("mig31k", "kinzhal", "ballistic", "ballistic_missile", "hypersonic") or any(w in raw_t_title for w in ["баліст", "кинжал", "кинджал"]):
+            marker_col = (255, 30, 70)       # Гіперзвук / Балістика (Яскраво-червоний)
+        elif t_type in ("missile", "cruise_missile") or "ракета" in raw_t_title:
+            marker_col = (255, 50, 220)      # Крилаті ракети (Яскраво-пурпуровий)
+        elif t_type in ("kab", "guided_bomb", "aviation", "tactical_aviation") or any(w in raw_t_title for w in ["каб", "фаб", "авіаційн"]):
+            marker_col = (255, 110, 30)      # КАБи / Ворожа авіація (Помаранчево-червоний)
+        elif t_type in ("jet_uav", "jet_drone") or "реактивн" in raw_t_title:
+            marker_col = (190, 80, 255)      # Реактивні БпЛА (Фіолетовий)
+        elif t_type in ("artillery", "mlrs", "grad") or any(w in raw_t_title for w in ["артобстріл", "рсзв", "град"]):
+            marker_col = (240, 130, 20)      # Артобстріл / РСЗВ (Темно-помаранчевий)
+        elif t_type in ("naval", "sea_launch") or "морськ" in raw_t_title:
+            marker_col = (30, 190, 230)      # Загроза з моря (Бирюзовий)
+        elif t_type in ("recon", "recon_uav") or any(w in raw_t_title for w in ["орлан", "zala", "supercam", "розвід"]):
+            marker_col = (80, 200, 255)      # Розвідувальні БпЛА (Блакитний)
         else:
-            marker_col = (255, 210, 40)
+            marker_col = (255, 210, 40)      # Поршневі БпЛА / Шахеди (Жовто-помаранчевий)
 
         # Зовнішній ореол та точка
         r_outer = 9
