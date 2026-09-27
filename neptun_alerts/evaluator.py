@@ -124,6 +124,17 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         t_lon = t.get("lon")
         area_only = bool(t.get("areaOnly", False))
 
+        t_type = (t.get("type") or "").lower().strip()
+        raw_expl_orig = t.get("explanationShort") or t.get("title", "")
+        raw_expl_lower = raw_expl_orig.lower()
+
+        is_fast_threat = t_type in ("missile", "ballistic", "kab", "mig31k") or any(
+            w in raw_expl_lower for w in ["ракета", "баліст", "кинжал", "кинджал", "каб", "авіаційн"]
+        )
+
+        towards_dist_limit = 80 if is_fast_threat else 30
+        close_dist_limit = 150 if is_fast_threat else 80
+
         dist_km = None
         if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None and not area_only:
             dist_km = round(haversine_km(user_lat, user_lon, t_lat, t_lon))
@@ -151,13 +162,13 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
                 if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None:
                     bearing_to_user = calculate_bearing(t_lat, t_lon, user_lat, user_lon)
                     angle_diff = abs((heading_deg - bearing_to_user + 180.0) % 360.0 - 180.0)
-                    if angle_diff <= 45.0 and (dist_km is not None and dist_km <= 20):
+                    if angle_diff <= 45.0 and (dist_km is not None and dist_km <= towards_dist_limit):
                         is_towards_user = True
             except Exception as ge_err:
                 logger.debug(f"Heading calc error: {ge_err}")
 
         in_same_oblast = _match_oblast(user_oblast, t_region)
-        is_close = dist_km is not None and dist_km <= 80
+        is_close = dist_km is not None and dist_km <= close_dist_limit
 
         if in_same_oblast or is_close:
             raw_expl = t.get("explanationShort") or t.get("title", "Зафіксовано ціль")
