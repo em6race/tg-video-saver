@@ -128,8 +128,8 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         raw_expl_orig = t.get("explanationShort") or t.get("title", "")
         raw_expl_lower = raw_expl_orig.lower()
 
-        is_fast_threat = t_type in ("missile", "ballistic", "kab", "mig31k") or any(
-            w in raw_expl_lower for w in ["ракета", "баліст", "кинжал", "кинджал", "каб", "авіаційн"]
+        is_fast_threat = t_type in ("missile", "ballistic", "kab", "mig31k", "jet_uav") or any(
+            w in raw_expl_lower for w in ["ракета", "баліст", "кинжал", "кинджал", "каб", "авіаційн", "реактивн"]
         )
 
         towards_dist_limit = 80 if is_fast_threat else 30

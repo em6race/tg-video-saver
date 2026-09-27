@@ -147,7 +147,8 @@ async def generate_alerts_map_image(alerts_data: dict, threats_data: dict, user_
         t_type = t.get("type", "uav")
 
         # Колір маркера цілі: ракети/балістика — яскраво-пурпуровий/білий, БпЛА — помаранчево-жовтий
-        if t_type in ("missile", "ballistic", "kab", "mig31k"):
+        raw_t_title = (t.get("explanationShort") or t.get("title") or "").lower()
+        if t_type in ("missile", "ballistic", "kab", "mig31k", "jet_uav") or "реактивн" in raw_t_title:
             marker_col = (255, 50, 220)
         elif t_type == "recon":
             marker_col = (80, 200, 255)
