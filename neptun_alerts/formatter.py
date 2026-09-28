@@ -65,8 +65,9 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     loc_parts = [p for p in [locality, raion, oblast] if p]
     unique_loc = []
     for p in loc_parts:
-        if p not in unique_loc:
-            unique_loc.append(p)
+        p_clean = p.replace(" область", " обл.").replace(" район", " р-н")
+        if p_clean not in unique_loc:
+            unique_loc.append(p_clean)
     loc_display = ", ".join(unique_loc)
 
     level = state["level"]
@@ -113,35 +114,31 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         lines.append("\n🛸 **Зафіксовані цілі поруч / в області:**")
         towards_count = 0
         for t in threats:
-            dist_str = f" *(~{t['distance_km']} км від вас)*" if t.get("distance_km") is not None else ""
-
-            relative_info = ""
-            if t.get("relative_dir_name") and t.get("relative_dir_arrow"):
-                relative_info = f"від вас: {t['relative_dir_arrow']} {t['relative_dir_name']}"
-
-            heading_info = ""
-            if t.get("direction_name") and t.get("direction_arrow"):
-                heading_info = f"курс {t['direction_arrow']} {t['direction_name']}"
-
-            conf_info = ""
-            if t.get("confidence"):
-                conf_info = f"достовірність: {t['confidence']}"
+            dist_str = f" *(~{t['distance_km']} км)*" if t.get("distance_km") is not None else ""
+            towards_tag = " ⚠️ *у ваш бік!*" if t.get("is_towards_user") else ""
 
             if t.get("is_towards_user"):
                 towards_count += 1
 
-            clean_expl = _escape_markdown(t['explanation'])
-            if t.get("advisory") or "ппо" in clean_expl.lower():
-                lines.append(f"\n🛡️ **{clean_expl}**{dist_str}")
-            else:
-                lines.append(f"\n• **{clean_expl}**{dist_str}")
-            details = [d for d in [relative_info, heading_info, conf_info] if d]
-            if details:
-                lines.append(f"  ↳ {' | '.join(details)}")
+            rel_arrow = t.get("relative_dir_arrow") or ""
+            rel_name = t.get("relative_dir_name") or ""
+            dir_arrow = t.get("direction_arrow") or ""
+            dir_name = t.get("direction_name") or ""
 
-        if towards_count > 0:
-            count_str = "1 цілі" if towards_count == 1 else f"{towards_count} цілей"
-            lines.append(f"\n⚠️ **МОЖЛИВА НЕБЕЗПЕКА: Вектор руху {count_str} спрямований у ваш бік!**")
+            dir_str = ""
+            if rel_name and dir_name:
+                dir_str = f"  ↳ {rel_arrow} {rel_name} (курс {dir_arrow} {dir_name})"
+            elif rel_name:
+                dir_str = f"  ↳ {rel_arrow} {rel_name}"
+            elif dir_name:
+                dir_str = f"  ↳ курс {dir_arrow} {dir_name}"
+
+            clean_expl = _escape_markdown(t['explanation'])
+            icon = "🛡️" if (t.get("advisory") or "ппо" in clean_expl.lower()) else "•"
+
+            lines.append(f"\n{icon} **{clean_expl}**{dist_str}{towards_tag}")
+            if dir_str:
+                lines.append(dir_str)
 
     has_ballistics = any(
         (t.get("type") in ("ballistic", "mig31k", "kinzhal")) or
@@ -158,6 +155,5 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         lines.append("\n⚠️ *Будь ласка, будьте уважні та стежте за оновленнями ситуації!*")
 
     now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
-    lines.append(f"\n⏱ **Оновлено:** {now_tz}")
-    lines.append("🗺 [Дані: Карта повітряних тривог — NEPTUN](https://neptun.in.ua/)")
+    lines.append(f"\n⏱ **Оновлено:** {now_tz} | [NEPTUN Map](https://neptun.in.ua/)")
     return "\n".join(lines)
