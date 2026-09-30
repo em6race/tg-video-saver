@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 import asyncio
 from dotenv import load_dotenv
@@ -8,16 +9,17 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    filters
+    filters,
 )
 
-from handlers.common import myid_command, help_command, error_handler
+from handlers.common import myid_command, help_command, error_handler, is_media_plugin_enabled
 from handlers.admin import (
     start,
     invite_command,
+    invites_list_command,
     clear_invites_command,
     users_command,
-    restart_command
+    restart_command,
 )
 from handlers.alerts import (
     alerts_command,
@@ -57,8 +59,9 @@ async def post_init(application: Application) -> None:
         BotCommand("alerts_off", "Вимкнути сповіщення"),
         BotCommand("map", "Карта тривог України зараз"),
         BotCommand("help", "Як користуватися та можливості"),
-        BotCommand("invite", "Створити запрошення (для адміна)"),
-        BotCommand("clear_invites", "Видалити невикористані інвайти (адмін)"),
+        BotCommand("invite", "Конструктор запрошень (адмін)"),
+        BotCommand("invites", "Список активних запрошень (адмін)"),
+        BotCommand("clear_invites", "Анулювати невикористані інвайти (адмін)"),
         BotCommand("users", "Список користувачів (для адміна)"),
         BotCommand("restart", "Оновити з GitHub та перезапустити (адмін)"),
     ]
@@ -66,9 +69,10 @@ async def post_init(application: Application) -> None:
 
     if ADMIN_ID:
         try:
+            mode_str = "Тривоги + Медіа-плагін" if is_media_plugin_enabled() else "Тільки тривоги (NEPTUN)"
             startup_msg = await application.bot.send_message(
                 chat_id=int(ADMIN_ID),
-                text="Бот моніторингу тривог успішно запущений і готовий до роботи! ✅",
+                text=f"Бот успішно запущений ({mode_str}) і готовий до роботи! ✅",
                 disable_notification=True
             )
 
@@ -88,7 +92,18 @@ async def post_init(application: Application) -> None:
     asyncio.create_task(auto_update(application))
 
 def main() -> None:
-    print("Starting NEPTUN Alerts Telegram bot...")
+    media_enabled = is_media_plugin_enabled()
+    print(f"Starting Telegram bot (Media Plugin Enabled: {media_enabled})...")
+
+    if media_enabled:
+        downloads_dir = "downloads"
+        if os.path.exists(downloads_dir):
+            import shutil
+            try:
+                shutil.rmtree(downloads_dir)
+            except Exception as e:
+                logger.warning(f"Failed to clean up downloads directory on startup: {e}")
+        os.makedirs(downloads_dir, exist_ok=True)
 
     application = Application.builder().token(TOKEN).post_init(post_init).build()
 
@@ -104,6 +119,7 @@ def main() -> None:
     application.add_handler(CommandHandler("alerts_off", alerts_off_command))
     application.add_handler(CommandHandler("map", map_command))
     application.add_handler(CommandHandler("invite", invite_command))
+    application.add_handler(CommandHandler("invites", invites_list_command))
     application.add_handler(CommandHandler("clear_invites", clear_invites_command))
     application.add_handler(CommandHandler("users", users_command))
     application.add_handler(CommandHandler("myid", myid_command))
@@ -113,6 +129,12 @@ def main() -> None:
     # Обробник геолокації та скасування
     application.add_handler(MessageHandler(filters.LOCATION, location_handler))
     application.add_handler(MessageHandler(filters.Regex(r"^❌ Скасувати$"), cancel_handler))
+
+    # Модульний плагін завантаження медіа (вмикається тільки якщо ENABLE_MEDIA_PLUGIN=true)
+    if media_enabled:
+        from handlers.media import handle_url
+        url_pattern = re.compile(r"https?://[^\s]+")
+        application.add_handler(MessageHandler(filters.Regex(url_pattern), handle_url))
 
     # Обробник callback кнопок
     application.add_handler(CallbackQueryHandler(handle_callback_query))

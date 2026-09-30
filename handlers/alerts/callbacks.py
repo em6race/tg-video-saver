@@ -2,10 +2,11 @@ import os
 import time
 import logging
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from database import (
+    is_admin,
     set_awaiting_location,
     save_user_location,
     disable_user_alerts,
@@ -13,6 +14,8 @@ from database import (
     get_user_subscription,
     set_user_last_alert_msg_id,
     toggle_user_sound,
+    revoke_invite,
+    clear_unused_invites,
 )
 from neptun_alerts import (
     forward_geocode,
@@ -28,7 +31,12 @@ from keyboards import (
     get_main_reply_keyboard,
     ALERT_REFRESH_COOLDOWN,
 )
-from handlers.common import check_access, help_command
+from handlers.common import check_access, help_command, is_media_plugin_enabled, ADMIN_ID
+from handlers.admin import (
+    get_invite_builder_keyboard,
+    send_created_invite_message,
+    build_invites_list_view,
+)
 from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
@@ -55,13 +63,103 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         return
 
-    choice = query.data
+    choice = query.data or ""
 
+    # --- ОБРОБКА КОНСТРУКТОРА ТА СПИСКУ ІНВАЙТІВ (ДЛЯ АДМІНА) ---
+    if choice.startswith("inv_"):
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        if not await is_admin(user_id, ADMIN_ID):
+            await query.answer("У вас немає прав для цієї дії 🚫", show_alert=True)
+            return
+
+        if choice.startswith("inv_cfg_u:"):
+            parts = choice.split(":")
+            sel_uses = int(parts[1])
+            sel_dur = int(parts[2])
+            await query.answer()
+            text, kb = get_invite_builder_keyboard(selected_uses=sel_uses, selected_dur=sel_dur)
+            await query.edit_message_text(text=text, reply_markup=kb, parse_mode="Markdown")
+            return
+
+        elif choice.startswith("inv_cfg_d:"):
+            parts = choice.split(":")
+            sel_uses = int(parts[1])
+            sel_dur = int(parts[2])
+            await query.answer()
+            text, kb = get_invite_builder_keyboard(selected_uses=sel_uses, selected_dur=sel_dur)
+            await query.edit_message_text(text=text, reply_markup=kb, parse_mode="Markdown")
+            return
+
+        elif choice.startswith("inv_create:"):
+            parts = choice.split(":")
+            sel_uses = int(parts[1])
+            sel_dur = int(parts[2])
+            await query.answer("🎟️ Створюю запрошення...")
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await send_created_invite_message(context.bot, chat_id, user_id, max_uses=sel_uses, duration_minutes=sel_dur)
+            return
+
+        elif choice == "inv_open_builder":
+            await query.answer()
+            text, kb = get_invite_builder_keyboard(selected_uses=1, selected_dur=30)
+            await query.edit_message_text(text=text, reply_markup=kb, parse_mode="Markdown")
+            return
+
+        elif choice == "inv_list":
+            await query.answer()
+            text, kb = await build_invites_list_view(context.bot)
+            await query.edit_message_text(text=text, reply_markup=kb, parse_mode="Markdown", disable_web_page_preview=True)
+            return
+
+        elif choice.startswith("inv_revoke:"):
+            code = choice.split(":", 1)[1]
+            ok, _ = await revoke_invite(code)
+            await query.answer("🗑️ Посилання-запрошення анульовано!", show_alert=False)
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            return
+
+        elif choice.startswith("inv_revoke_list:"):
+            code = choice.split(":", 1)[1]
+            ok, msg_pair = await revoke_invite(code)
+            if msg_pair:
+                c_id, m_id = msg_pair
+                try:
+                    await context.bot.delete_message(chat_id=c_id, message_id=m_id)
+                except Exception:
+                    pass
+            await query.answer("🗑️ Запрошення анульовано!", show_alert=False)
+            text, kb = await build_invites_list_view(context.bot)
+            await query.edit_message_text(text=text, reply_markup=kb, parse_mode="Markdown", disable_web_page_preview=True)
+            return
+
+        elif choice == "inv_clear_all":
+            deleted, msgs_to_delete = await clear_unused_invites()
+            for c_id, m_id in msgs_to_delete:
+                try:
+                    await context.bot.delete_message(chat_id=c_id, message_id=m_id)
+                except Exception:
+                    pass
+            await query.answer(f"🗑️ Анульовано запрошень: {deleted}", show_alert=True)
+            text, kb = await build_invites_list_view(context.bot)
+            try:
+                await query.edit_message_text(text=text, reply_markup=kb, parse_mode="Markdown", disable_web_page_preview=True)
+            except Exception:
+                pass
+            return
+
+    # --- ОБРОБКА ТРИВОГ ТА ЛОКАЦІЇ ---
     if choice == "open_alerts":
         await query.answer()
         user_id = query.from_user.id
         chat_id = query.message.chat_id
-        await set_awaiting_location(user_id, chat_id, False)
+        await set_awaiting_location(user_id, chat_id, True)
         try:
             if query.message:
                 await query.message.delete()
@@ -103,7 +201,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             close_msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text="Меню закрито 👍",
-                reply_markup=ReplyKeyboardRemove()
+                reply_markup=get_main_reply_keyboard()
             )
 
             async def _auto_delete_notice(msg):
@@ -145,6 +243,23 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 logger.warning(f"Failed to repost status card on close_map: {e}")
         return
 
+    elif choice == "prompt_city":
+        await query.answer()
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        await set_awaiting_location(user_id, chat_id, True)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "🏙️ **Напишіть у цей чат назву вашого міста, селища або села в Україні**\n"
+                "*(наприклад: `Київ`, `Ірпінь`, `Бровари`, `с. Софіївська Борщагівка`)*\n\n"
+                "📍 Або натисніть кнопку **«📍 Надіслати мою геопозицію»** внизу екрана:"
+            ),
+            reply_markup=get_main_reply_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
+
     elif choice == "prompt_gps":
         await query.answer()
         user_id = query.from_user.id
@@ -152,7 +267,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await set_awaiting_location(user_id, chat_id, True)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📍 **Скористайтеся кнопкою «📍 Надіслати мою геопозицію» внизу екрана:**",
+            text="📍 **Натисніть кнопку «📍 Надіслати мою геопозицію» внизу екрана** (або просто напишіть назву вашого міста у чат):",
             reply_markup=get_main_reply_keyboard(),
             parse_mode="Markdown"
         )
@@ -276,11 +391,19 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             buttons.append(nav_row)
 
         buttons.append([
+            InlineKeyboardButton("🏙️ Вписати місто", callback_data="prompt_city"),
+            InlineKeyboardButton("📍 Надіслати GPS", callback_data="prompt_gps")
+        ])
+        buttons.append([
             InlineKeyboardButton("🏠 В меню", callback_data="open_alerts"),
             InlineKeyboardButton("❌ Закрити", callback_data="close_menu")
         ])
 
-        await query.edit_message_text("Оберіть вашу область зі списку:", reply_markup=InlineKeyboardMarkup(buttons))
+        await query.edit_message_text(
+            "🗺️ **Оберіть вашу область зі списку** (або одразу напишіть назву міста у чат):",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown"
+        )
         return
 
     elif choice == "confirm_pending_loc":
@@ -300,7 +423,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="⚠️ Термін дії запиту минув. Будь ласка, введіть назву міста ще раз через /alerts.",
-                reply_markup=ReplyKeyboardRemove()
+                reply_markup=get_main_reply_keyboard()
             )
         return
 
@@ -309,36 +432,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         chat_id = query.message.chat_id
         context.user_data.pop("pending_geo", None)
-        await set_awaiting_location(user_id, chat_id, False)
+        await set_awaiting_location(user_id, chat_id, True)
         try:
             await query.message.delete()
         except Exception:
             pass
 
-        sub = await get_user_subscription(user_id)
-        if sub and sub.get("oblast"):
-            try:
-                alerts_data, threats_data = await fetch_neptun_data()
-                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
-                _user_last_alert_state[user_id] = current_state["level"]
-                _user_last_threat_signature[user_id] = make_threat_signature(current_state)
-
-                await repost_alert_message_to_bottom(
-                    bot=context.bot,
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    sub=sub,
-                    current_state=current_state,
-                    is_manual_check=True
-                )
-            except Exception as e:
-                logger.warning(f"Failed to repost status card on cancel_pending_loc: {e}")
-        else:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="❌ Встановлення локації скасовано.",
-                reply_markup=ReplyKeyboardRemove()
-            )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="🏙️ Напишіть іншу назву міста/села у чат або натисніть кнопку **«📍 Надіслати мою геопозицію»** внизу екрана:",
+            reply_markup=get_main_reply_keyboard(),
+            parse_mode="Markdown"
+        )
         return
 
     elif choice.startswith("set_oblast:"):
@@ -348,38 +453,56 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         chat_id = query.message.chat_id
 
         await save_user_location(user_id, chat_id, oblast_name, "", "", None, None)
-        await set_awaiting_location(user_id, chat_id, False)
+        # Залишаємо режим очікування локації увімкненим, щоб користувач міг одразу вписати місто або дати GPS!
+        await set_awaiting_location(user_id, chat_id, True)
 
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🏙️ Вписати місто / село", callback_data="prompt_city"),
+                InlineKeyboardButton("📍 Надіслати GPS", callback_data="prompt_gps")
+            ],
+            [InlineKeyboardButton("✅ Залишити тільки область (до статусу)", callback_data="close_menu")]
+        ])
 
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"✅ **Область збережено:** {oblast_name}!\n\n"
-                 "Тепер ви будете оперативно отримувати сповіщення про зміну рівнів тривог (🔴/🟡) та відбої.",
-            reply_markup=ReplyKeyboardRemove(),
+        await query.edit_message_text(
+            text=(
+                f"✅ **Область збережено:** {oblast_name}!\n\n"
+                "📍 **Бажаєте також вказати ваше місто/село або геопозицію?**\n"
+                "*(Це дозволить боту показувати точну відстань у км та курс шахедів/ракет відносно вас)*\n\n"
+                "• ✍️ **Просто напишіть у чат назву міста чи села** (наприклад: `Ірпінь`, `Бровари`)\n"
+                "• 📍 **Або натисніть «📍 Надіслати мою геопозицію»** внизу екрана\n"
+                "• ⏭️ Або натисніть **«✅ Залишити тільки область»**, якщо уточнення не потрібне:"
+            ),
+            reply_markup=kb,
             parse_mode="Markdown"
         )
+        return
 
+    # Якщо увімкнено медіа-плагін — обробляємо кнопки вибору формату YouTube
+    if is_media_plugin_enabled() and choice in ("yt_video", "yt_audio", "yt_both"):
+        from handlers.media import process_video, process_audio, send_typing_action
+        await query.answer()
+        if not query.message.reply_to_message or not query.message.reply_to_message.text:
+            await query.edit_message_text(text="❌ Помилка: не вдалося знайти оригінальне посилання. Відправте його ще раз.")
+            return
+
+        url = query.message.reply_to_message.text
+        await query.edit_message_text(text="⏳ Завантажую, зачекайте...")
+        typing_task = asyncio.create_task(send_typing_action(query.message.chat_id, context))
         try:
-            alerts_data, threats_data = await fetch_neptun_data()
-            sub = await get_user_subscription(user_id)
-            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
-            _user_last_alert_state[user_id] = current_state["level"]
-            _user_last_threat_signature[user_id] = make_threat_signature(current_state)
-
-            await repost_alert_message_to_bottom(
-                bot=context.bot,
-                chat_id=chat_id,
-                user_id=user_id,
-                sub=sub,
-                current_state=current_state,
-                is_manual_check=True
-            )
-        except Exception as e:
-            logger.warning(f"Failed to fetch initial alert state after set_oblast: {e}")
+            if choice == "yt_video":
+                await process_video(query.message.reply_to_message, context, url)
+            elif choice == "yt_audio":
+                await process_audio(query.message.reply_to_message, context, url)
+            elif choice == "yt_both":
+                await process_video(query.message.reply_to_message, context, url)
+                await process_audio(query.message.reply_to_message, context, url)
+        finally:
+            typing_task.cancel()
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
         return
 
     await query.answer()
@@ -406,10 +529,14 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
     sub = await get_user_subscription(user_id)
 
-    if sub and sub.get("awaiting_location"):
+    # Шукаємо населений пункт, якщо увімкнено очікування локації АБО якщо користувач просто вписав назву міста
+    should_try_geocode = (sub and sub.get("awaiting_location")) or (
+        not is_media_plugin_enabled() and len(text) <= 60 and not text.startswith("http")
+    )
+
+    if should_try_geocode:
         status_msg = await update.message.reply_text(f"🔍 Шукаю населений пункт «{text}»...")
         geo = await forward_geocode(text)
         if geo:
@@ -427,7 +554,9 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
 
-    await update.message.reply_text(
-        "Скористайтеся кнопками меню внизу екрана для перевірки статусу тривоги, карти або налаштування локації 🚨",
-        reply_markup=get_main_reply_keyboard()
+    hint = (
+        "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram, Spotify) або скористайтеся меню кнопок нижче 🚨"
+        if is_media_plugin_enabled()
+        else "Напишіть назву вашого міста для налаштування тривог або скористайтеся кнопками меню внизу екрана 🚨"
     )
+    await update.message.reply_text(hint, reply_markup=get_main_reply_keyboard())

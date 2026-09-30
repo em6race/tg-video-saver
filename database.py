@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 import uuid
 import logging
@@ -18,6 +19,14 @@ def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS file_cache (
+                url TEXT,
+                type TEXT,
+                file_id TEXT,
+                PRIMARY KEY (url, type)
+            )
+        ''')
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS allowed_users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -34,24 +43,27 @@ def init_db():
                 created_at TEXT,
                 expires_at TEXT,
                 chat_id INTEGER,
-                msg_id INTEGER
+                msg_id INTEGER,
+                max_uses INTEGER DEFAULT 1,
+                used_count INTEGER DEFAULT 0
             )
         ''')
-        try:
-            cursor.execute("ALTER TABLE invites ADD COLUMN expires_at TEXT")
-        except Exception:
-            pass
-        try:
-            cursor.execute("ALTER TABLE invites ADD COLUMN chat_id INTEGER")
-        except Exception:
-            pass
-        try:
-            cursor.execute("ALTER TABLE invites ADD COLUMN msg_id INTEGER")
-        except Exception:
-            pass
+        for col_sql in (
+            "ALTER TABLE invites ADD COLUMN expires_at TEXT",
+            "ALTER TABLE invites ADD COLUMN chat_id INTEGER",
+            "ALTER TABLE invites ADD COLUMN msg_id INTEGER",
+            "ALTER TABLE invites ADD COLUMN max_uses INTEGER DEFAULT 1",
+            "ALTER TABLE invites ADD COLUMN used_count INTEGER DEFAULT 0",
+        ):
+            try:
+                cursor.execute(col_sql)
+            except Exception:
+                pass
 
-        cursor.execute("DELETE FROM invites WHERE expires_at IS NULL")
-        cursor.execute("DELETE FROM invites WHERE is_used=0 AND expires_at < ?", (datetime.utcnow().isoformat(),))
+        cursor.execute(
+            "DELETE FROM invites WHERE is_used=0 AND expires_at IS NOT NULL AND expires_at != '' AND expires_at < ?",
+            (datetime.utcnow().isoformat(),)
+        )
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS alert_subscriptions (
@@ -77,6 +89,46 @@ def init_db():
         except Exception:
             pass
         conn.commit()
+
+# --- АСИНХРОННИЙ КЕШ ФАЙЛІВ (ДЛЯ ПЛАГІНА МЕДІА) ---
+
+def _get_cached_file_id_sync(url: str, type: str) -> str:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_id FROM file_cache WHERE url=? AND type=?", (url, type))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+def _set_cached_file_id_sync(url: str, type: str, file_id: str):
+    if not file_id:
+        return
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO file_cache (url, type, file_id)
+            VALUES (?, ?, ?)
+        ''', (url, type, file_id))
+        conn.commit()
+
+async def get_cached_file_id(url: str, type: str) -> str:
+    if aiosqlite is None:
+        return await asyncio.to_thread(_get_cached_file_id_sync, url, type)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT file_id FROM file_cache WHERE url=? AND type=?", (url, type)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+async def set_cached_file_id(url: str, type: str, file_id: str):
+    if not file_id:
+        return
+    if aiosqlite is None:
+        return await asyncio.to_thread(_set_cached_file_id_sync, url, type, file_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT OR REPLACE INTO file_cache (url, type, file_id)
+            VALUES (?, ?, ?)
+        ''', (url, type, file_id))
+        await db.commit()
 
 # --- АСИНХРОННИЙ ПРИВАТНИЙ ДОСТУП ТА ІНВАЙТИ ---
 
@@ -151,17 +203,20 @@ async def add_allowed_user(user_id: int, username: str = "", invited_by: int = 0
         ''', (int(user_id), username or "", int(invited_by), now))
         await db.commit()
 
-async def create_single_use_invite(created_by: int, duration_minutes: int = 30) -> tuple[str, str]:
+async def create_single_use_invite(created_by: int, duration_minutes: int | None = 30, max_uses: int = 1) -> tuple[str, str | None]:
     code = uuid.uuid4().hex[:12]
     now = datetime.utcnow()
-    expires = now + timedelta(minutes=duration_minutes)
     now_str = now.isoformat()
-    expires_str = expires.isoformat()
+    if duration_minutes is not None and duration_minutes > 0:
+        expires_str = (now + timedelta(minutes=duration_minutes)).isoformat()
+    else:
+        expires_str = None
+
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
-            INSERT INTO invites (code, created_by, is_used, used_by, created_at, expires_at)
-            VALUES (?, ?, 0, NULL, ?, ?)
-        ''', (code, int(created_by), now_str, expires_str))
+            INSERT INTO invites (code, created_by, is_used, used_by, created_at, expires_at, max_uses, used_count)
+            VALUES (?, ?, 0, NULL, ?, ?, ?, 0)
+        ''', (code, int(created_by), now_str, expires_str, int(max_uses)))
         await db.commit()
     return code, expires_str
 
@@ -176,13 +231,27 @@ async def redeem_invite(code: str, user_id: int, username: str = "") -> tuple[bo
     now = datetime.utcnow()
     now_str = now.isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT created_by, is_used, expires_at, chat_id, msg_id FROM invites WHERE code=?", (code,)) as cursor:
+        async with db.execute(
+            "SELECT created_by, is_used, expires_at, chat_id, msg_id, max_uses, used_count FROM invites WHERE code=?",
+            (code,)
+        ) as cursor:
             row = await cursor.fetchone()
             if not row:
                 return False, "not_found", {}
-            created_by, is_used, expires_at, chat_id, msg_id = row
-            invite_meta = {"created_by": created_by, "chat_id": chat_id, "msg_id": msg_id}
-            if is_used:
+            created_by, is_used, expires_at, chat_id, msg_id, max_uses, used_count = row
+            max_uses = int(max_uses) if max_uses is not None else 1
+            used_count = int(used_count) if used_count is not None else 0
+            invite_meta = {
+                "code": code,
+                "created_by": created_by,
+                "chat_id": chat_id,
+                "msg_id": msg_id,
+                "max_uses": max_uses,
+                "used_count": used_count,
+                "expires_at": expires_at,
+                "fully_used": False,
+            }
+            if is_used or (max_uses > 0 and used_count >= max_uses):
                 return False, "already_used", invite_meta
 
             if expires_at:
@@ -193,15 +262,62 @@ async def redeem_invite(code: str, user_id: int, username: str = "") -> tuple[bo
                 except Exception:
                     pass
 
+        new_used_count = used_count + 1
+        fully_used = 1 if (max_uses > 0 and new_used_count >= max_uses) else 0
+        invite_meta["used_count"] = new_used_count
+        invite_meta["fully_used"] = bool(fully_used)
+
         await db.execute('''
-            UPDATE invites SET is_used=1, used_by=? WHERE code=?
-        ''', (int(user_id), code))
+            UPDATE invites SET used_count=?, is_used=?, used_by=? WHERE code=?
+        ''', (new_used_count, fully_used, int(user_id), code))
         await db.execute('''
             INSERT OR REPLACE INTO allowed_users (user_id, username, invited_by, joined_at)
             VALUES (?, ?, ?, ?)
         ''', (int(user_id), username or "", created_by, now_str))
         await db.commit()
         return True, "ok", invite_meta
+
+async def get_active_invites() -> list[dict]:
+    now_iso = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Спочатку видалимо ті, в яких вже вийшов термін дії
+        await db.execute(
+            "DELETE FROM invites WHERE is_used=0 AND expires_at IS NOT NULL AND expires_at != '' AND expires_at < ?",
+            (now_iso,)
+        )
+        await db.commit()
+
+        async with db.execute('''
+            SELECT code, created_by, created_at, expires_at, chat_id, msg_id, max_uses, used_count
+            FROM invites
+            WHERE is_used=0 AND (expires_at IS NULL OR expires_at = '' OR expires_at >= ?)
+            ORDER BY created_at DESC
+        ''', (now_iso,)) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for r in rows:
+                result.append({
+                    "code": r[0],
+                    "created_by": r[1],
+                    "created_at": r[2],
+                    "expires_at": r[3],
+                    "chat_id": r[4],
+                    "msg_id": r[5],
+                    "max_uses": int(r[6]) if r[6] is not None else 1,
+                    "used_count": int(r[7]) if r[7] is not None else 0,
+                })
+            return result
+
+async def revoke_invite(code: str) -> tuple[bool, tuple[int, int] | None]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT chat_id, msg_id FROM invites WHERE code=?", (code,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return False, None
+            msg_pair = (int(row[0]), int(row[1])) if (row[0] is not None and row[1] is not None) else None
+        await db.execute("DELETE FROM invites WHERE code=?", (code,))
+        await db.commit()
+        return True, msg_pair
 
 async def clear_unused_invites() -> tuple[int, list[tuple[int, int]]]:
     async with aiosqlite.connect(DB_PATH) as db:

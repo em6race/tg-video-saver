@@ -15,7 +15,7 @@ from neptun_alerts import (
     format_alert_message,
     make_threat_signature,
 )
-from keyboards import get_alert_inline_keyboard
+from keyboards import get_alert_inline_keyboard, get_main_reply_keyboard
 from handlers.common import check_access
 from handlers.alerts.state import (
     _user_last_alert_state,
@@ -93,16 +93,10 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
     loc_display = ", ".join(unique_loc)
 
     msg = update.effective_message
-    await msg.reply_text(
+    confirm_msg = await msg.reply_text(
         f"✅ **Локацію успішно збережено!**\n\n"
-        f"📍 **Ваш регіон:** {loc_display}\n\n"
-        "Тепер бот цілодобово моніторитиме повітряний простір для вашої локації і надсилатиме сповіщення про:\n"
-        "🔴 **Червоний рівень** — ракетна/дронова тривога (пройдіть в укриття!)\n"
-        "🟡 **Жовтий рівень** — загроза артобстрілу / підвищена небезпека\n"
-        "🛸 **Повітряні цілі поруч** — тип (БпЛА/ракета), курс та відстань у км\n"
-        "🟢 **Відбій тривоги** (повідомлення оновлюється на спокійний зелений статус)\n\n"
-        "🧹 *У чаті підтримується лише одне повідомлення тривоги, яке автоматично оновлюється та очищується.*",
-        reply_markup=ReplyKeyboardRemove(),
+        f"📍 **Ваш регіон:** {loc_display}",
+        reply_markup=get_main_reply_keyboard(),
         parse_mode="Markdown"
     )
 
@@ -132,21 +126,10 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not location:
         return
 
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    sub = await get_user_subscription(user_id)
-    if not sub or not sub.get("awaiting_location"):
-        await update.message.reply_text(
-            "⚠️ Щоб прив'язати або оновити геолокацію для тривог, спочатку активуйте цю функцію командою **/alerts** і натисніть кнопку передачі геопозиції!",
-            parse_mode="Markdown"
-        )
-        return
-
     lat = location.latitude
     lon = location.longitude
 
-    status_msg = await update.message.reply_text("⏳ Визначаю вашу область та район за координатами...")
+    status_msg = await update.message.reply_text("⏳ Визначаю ваше місто, район та область за координатами...")
 
     try:
         geo = await reverse_geocode(lat, lon)
@@ -185,4 +168,4 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception as e:
             logger.warning(f"Failed to repost status card on cancel_handler: {e}")
 
-    await update.message.reply_text("Дію скасовано 👍", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Дію скасовано 👍", reply_markup=get_main_reply_keyboard())

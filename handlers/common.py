@@ -1,8 +1,10 @@
 import os
+import time
 import logging
 import traceback
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.error import Conflict, NetworkError, TimedOut
 from dotenv import load_dotenv
 
 from database import is_user_allowed
@@ -11,6 +13,10 @@ from keyboards import get_main_reply_keyboard
 load_dotenv()
 ADMIN_ID = os.getenv("ADMIN_ID")
 logger = logging.getLogger(__name__)
+
+def is_media_plugin_enabled() -> bool:
+    """Перевіряє, чи увімкнено плагін завантаження медіа (TikTok/YouTube/Spotify) у .env."""
+    return os.getenv("ENABLE_MEDIA_PLUGIN", "false").strip().lower() in ("1", "true", "yes", "on")
 
 async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Перевіряє, чи має користувач доступ до бота (приватний режим)."""
@@ -46,33 +52,43 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     await delete_user_command_message(update)
+    media_section = ""
+    if is_media_plugin_enabled():
+        media_section = (
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📥 **Як завантажувати відео та музику (Плагін увімкнено)**\n"
+            "Просто надішліть боту посилання на потрібне медіа:\n"
+            "• **TikTok**: скачує відео без водяного знаку + окремо MP3 аудіо або фото-альбом.\n"
+            "• **YouTube**: запропонує кнопки (🎬 Відео / 🎵 MP3 аудіо / 🎬+🎵 Обидва).\n"
+            "• **Instagram / Twitter (X)**: завантажує Reels та відеопости.\n"
+            "• **Spotify, SoundCloud, YT Music**: знаходить і відправляє MP3 з обкладинкою.\n\n"
+        )
+
     help_text = (
         "📖 **Повна інструкція з користування ботом**\n\n"
+        f"{media_section}"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🚨 **1. Як налаштувати повітряні тривоги**\n"
         "1. Напишіть команду `/alerts` (або одразу `/alerts НазваМіста`, наприклад `/alerts Ірпінь`).\n"
-        "2. Просто напишіть у чат назву вашого міста/села або натисніть велику кнопку **«📍 Надіслати мою геопозицію»** (також можна обрати область зі списку).\n"
+        "2. Ви можете обрати область зі списку, вписати назву свого міста/села або натиснути кнопку **«📍 Надіслати мою геопозицію»** внизу екрана.\n"
         "3. Бот автоматично визначить координати, район та увімкне сповіщення!\n\n"
         "**Що означають сповіщення:**\n"
         "• 🔴 **Червоний рівень** — повітряна тривога! Загроза ракет, балістики, шахедів або КАБ (негайно в укриття!).\n"
         "• 🟡 **Жовтий рівень** — підвищена небезпека (проліт дронів на підльоті, загроза артобстрілу).\n"
-        "• 🛸 **Цілі поруч** — бот вказує, що саме летить, курс та приблизну відстань у км до вас.\n"
+        "• 🛸 **Цілі поруч** — якщо ви вказали місто або геопозицію, бот вказує курс та точну відстань у км до вас.\n"
         "• 🟢 **Відбій** — приходить тихо (без звуку), щоб не турбувати вночі.\n"
-        "• 🧹 **Одне оновлюване повідомлення** — бот тримає чат чистим, автоматично редагуючи поточне повідомлення при зміні цілей/рівня небезпеки або відбої.\n"
-        "• 🔄 **Ручне оновлення** — ви можете будь-коли натиснути кнопку **«🔄 Оновити»** прямо під повідомленням.\n\n"
+        "• 🧹 **Одне оновлюване повідомлення** — бот тримає чат чистим, автоматично редагуючи поточне повідомлення при зміні цілей/рівня небезпеки або відбої.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🗺 **2. Карта тривог та швидкі команди**\n"
         "• `/status` (або `/check`) — перевірити актуальну ситуацію у вашому районі.\n"
         "• `/map` — актуальна графічна HD-карта України з тривогами та цілями в небі.\n"
         "• `/alerts [місто]` — налаштувати локацію або переглянути меню.\n"
-        "• `/alerts_on` — увімкнути сповіщення (якщо локація вже була задана).\n"
-        "• `/alerts_off` — вимкнути сповіщення.\n"
+        "• `/alerts_on` / `/alerts_off` — увімкнути або вимкнути сповіщення.\n"
+        "• `/invite` — конструктор запрошень (на 1..N людей та різний час, для адміна).\n"
+        "• `/invites` — список активних запрошень та їх анулювання (для адміна).\n"
         "• `/help` — переглянути цю інструкцію."
     )
-    await update.message.reply_text(help_text, reply_markup=get_main_reply_keyboard(), parse_mode="Markdown")
-
-import time
-from telegram.error import Conflict, NetworkError, TimedOut
+    await update.effective_message.reply_text(help_text, reply_markup=get_main_reply_keyboard(), parse_mode="Markdown")
 
 _last_conflict_notify_time = 0.0
 
@@ -92,9 +108,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
                     text=(
                         "⚠️ **Виявлено конфлікт запуску (Telegram Conflict)!**\n\n"
                         "З тим самим `BOT_TOKEN` одночасно запущено **два екземпляри бота**.\n"
-                        "Перевірте:\n"
-                        "1️⃣ Чи не запущений бот паралельно на іншому хостингу (наприклад, старий сервер на Render/Railway + новий на Wispbyte).\n"
-                        "2️⃣ Чи не відкрито другий контейнер або локальний термінал із цим токеном.\n\n"
                         "*Зупиніть зайвий екземпляр, щоб уникнути дублювання запитів.*"
                     ),
                     parse_mode="Markdown",

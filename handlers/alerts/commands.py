@@ -22,6 +22,7 @@ from neptun_alerts import (
 )
 from keyboards import (
     get_alert_inline_keyboard,
+    get_main_reply_keyboard,
     ALERT_REFRESH_COOLDOWN,
 )
 from handlers.common import check_access, delete_user_command_message
@@ -80,14 +81,10 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "🚨 **Налаштування сповіщень про повітряну тривогу**\n\n"
         f"• Статус сповіщень: {status_str}\n"
         f"• Ваша поточна локація: **{loc_str}**\n\n"
-        "⚡ **Керування командами:**\n"
-        "• `/alerts_on` — увімкнути сповіщення\n"
-        "• `/alerts_off` — вимкнути сповіщення\n"
-        "• `/map` — переглянути карту тривог\n\n"
-        "📍 **Як встановити або оновити вашу локацію:**\n"
+        "📍 **Як встановити або змінити місто / локацію:**\n"
         "1️⃣ **Просто напишіть у цей чат назву вашого міста чи села** (наприклад: `Київ`, `Ірпінь`, `Полтава`)\n"
-        "2️⃣ **Оберіть область зі списку** (кнопка «🗺️ Обрати область вручну» нижче)\n"
-        "3️⃣ **Або надішліть GPS-координати** за допомогою кнопки «📍 Надіслати мою геопозицію» внизу екрана"
+        "2️⃣ **Натисніть кнопку «📍 Надіслати мою геопозицію»** внизу екрана\n"
+        "3️⃣ **Або оберіть область зі списку** нижче (після вибору області також можна уточнити місто або GPS)"
     )
 
     toggle_btn = (
@@ -97,7 +94,11 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     inline_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🗺️ Обрати область вручну", callback_data="alerts_manual_page_0")],
+        [
+            InlineKeyboardButton("🏙️ Вписати місто / село", callback_data="prompt_city"),
+            InlineKeyboardButton("📍 Надіслати GPS", callback_data="prompt_gps")
+        ],
+        [InlineKeyboardButton("🗺️ Обрати область зі списку", callback_data="alerts_manual_page_0")],
         [InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")],
         [InlineKeyboardButton("🔍 Перевірити стан тривоги зараз", callback_data="alerts_check")],
         [toggle_btn],
@@ -127,13 +128,14 @@ async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"📍 **Регіон моніторингу:** {loc_str}\n\n"
             "Тепер ви будете оперативно отримувати сповіщення про загрози (🔴 червоний / 🟡 жовтий рівень) та відбої.\n"
             "Вимкнути можна будь-коли командою `/alerts_off`.",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=get_main_reply_keyboard(),
             parse_mode="Markdown"
         )
     else:
         await update.message.reply_text(
             "📍 **У вас ще не встановлено регіон для сповіщень!**\n\n"
             "Будь ласка, надішліть вашу геопозицію або оберіть область зі списку:",
+            reply_markup=get_main_reply_keyboard(),
             parse_mode="Markdown"
         )
         await alerts_command(update, context)
@@ -150,7 +152,7 @@ async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(
         "🔕 **Сповіщення про повітряну тривогу ВИМКНЕНО.**\n\n"
         "Ви не отримуватимете автоматичних сповіщень. Увімкнути знову можна командою `/alerts_on` або `/alerts`.",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=get_main_reply_keyboard(),
         parse_mode="Markdown"
     )
 
