@@ -70,11 +70,20 @@ async def post_init(application: Application) -> None:
 
     if ADMIN_ID:
         try:
-            await application.bot.send_message(
+            startup_msg = await application.bot.send_message(
                 chat_id=int(ADMIN_ID),
-                text="Бот успішно запущений і готовий до роботи! ✅\nПідключено асинхронну БД (aiosqlite) та централізований обробник помилок.",
+                text="Бот успішно запущений і готовий до роботи! ✅",
                 disable_notification=True
             )
+
+            async def _delete_startup_msg(msg):
+                await asyncio.sleep(10)
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            asyncio.create_task(_delete_startup_msg(startup_msg))
         except Exception as e:
             logger.warning(f"Could not send startup message to admin: {e}")
 

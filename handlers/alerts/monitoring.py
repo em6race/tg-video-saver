@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 import pytz
 
-from database import set_user_last_alert_msg_id, get_all_enabled_subscriptions
+from database import set_user_last_alert_msg_id, get_all_enabled_subscriptions, get_user_subscription
 from neptun_alerts import (
     fetch_neptun_data,
     evaluate_user_alert_state,
@@ -26,13 +26,20 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 
 async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: dict, current_state: dict, is_manual_check: bool = False, prev_level: str = None, extra_msg_id_to_delete: int = None) -> None:
     """Видаляє попереднє повідомлення тривоги та надсилає НОВЕ насамкінець чату."""
-    last_msg_id = sub.get("last_alert_msg_id")
+    last_msg_id = sub.get("last_alert_msg_id") if sub else None
 
     msg_ids_to_delete = set()
     if last_msg_id:
         msg_ids_to_delete.add(last_msg_id)
     if extra_msg_id_to_delete:
         msg_ids_to_delete.add(extra_msg_id_to_delete)
+
+    try:
+        fresh_sub = await get_user_subscription(user_id)
+        if fresh_sub and fresh_sub.get("last_alert_msg_id"):
+            msg_ids_to_delete.add(fresh_sub["last_alert_msg_id"])
+    except Exception:
+        pass
 
     for m_id in msg_ids_to_delete:
         try:
@@ -54,6 +61,8 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
             disable_notification=is_silent,
             disable_web_page_preview=True
         )
+        if sub is not None:
+            sub["last_alert_msg_id"] = sent_msg.message_id
         await set_user_last_alert_msg_id(user_id, sent_msg.message_id)
     except Exception as send_err:
         logger.warning(f"Could not repost alert message to bottom for {chat_id}: {send_err}")
@@ -86,6 +95,26 @@ async def alerts_monitoring_loop(application) -> None:
                         if prev_level is None:
                             _user_last_alert_state[user_id] = curr_level
                             _user_last_threat_signature[user_id] = current_sig
+                            _user_last_auto_edit_time[user_id] = now
+
+                            if last_msg_id:
+                                msg_text = format_alert_message(sub, current_state, is_manual_check=True)
+                                try:
+                                    await application.bot.edit_message_text(
+                                        chat_id=chat_id,
+                                        message_id=last_msg_id,
+                                        text=msg_text,
+                                        reply_markup=alert_kb,
+                                        parse_mode="Markdown",
+                                        disable_web_page_preview=True
+                                    )
+                                    continue
+                                except Exception as edit_err:
+                                    err_str = str(edit_err).lower()
+                                    if "message is not modified" in err_str:
+                                        continue
+                                    logger.debug(f"Startup in-place edit failed ({edit_err}), reposting...")
+
                             await repost_alert_message_to_bottom(
                                 bot=application.bot,
                                 chat_id=chat_id,
@@ -127,16 +156,17 @@ async def alerts_monitoring_loop(application) -> None:
                                             disable_web_page_preview=True
                                         )
                                     except Exception as edit_err:
-                                        logger.debug(f"In-place edit failed ({edit_err}), reposting...")
-                                        await repost_alert_message_to_bottom(
-                                            bot=application.bot,
-                                            chat_id=chat_id,
-                                            user_id=user_id,
-                                            sub=sub,
-                                            current_state=current_state,
-                                            is_manual_check=False,
-                                            prev_level=prev_level
-                                        )
+                                        if "message is not modified" not in str(edit_err).lower():
+                                            logger.debug(f"In-place edit failed ({edit_err}), reposting...")
+                                            await repost_alert_message_to_bottom(
+                                                bot=application.bot,
+                                                chat_id=chat_id,
+                                                user_id=user_id,
+                                                sub=sub,
+                                                current_state=current_state,
+                                                is_manual_check=False,
+                                                prev_level=prev_level
+                                            )
 
         except Exception as e:
             logger.error(f"Error in alerts monitoring loop: {e}")
@@ -149,9 +179,10 @@ async def auto_update(application) -> None:
         await asyncio.sleep(60)
         now = datetime.now(tz)
         if now.hour == 3 and now.minute == 0:
+            notice_msg = None
             if ADMIN_ID:
                 try:
-                    await application.bot.send_message(
+                    notice_msg = await application.bot.send_message(
                         chat_id=int(ADMIN_ID),
                         text="🕒 3:00 ночі. Завантажую оновлення з GitHub і перезапускаюсь... 🔄",
                         disable_notification=True
@@ -163,6 +194,12 @@ async def auto_update(application) -> None:
                 subprocess.run(["git", "pull"], check=True)
             except Exception as e:
                 logger.error(f"Git pull failed: {e}")
+
+            if notice_msg:
+                try:
+                    await notice_msg.delete()
+                except Exception:
+                    pass
 
             try:
                 if application.updater and application.updater.running:

@@ -371,16 +371,14 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             _user_last_alert_state[user_id] = current_state["level"]
             _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
-            sound_enabled = sub.get("sound_enabled", True) if sub else True
-            report = format_alert_message(sub, current_state, is_manual_check=True)
-            sent_status_msg = await context.bot.send_message(
+            await repost_alert_message_to_bottom(
+                bot=context.bot,
                 chat_id=chat_id,
-                text=f"📊 **Поточна ситуація на цей момент:**\n\n{report}",
-                reply_markup=get_alert_inline_keyboard(sound_enabled),
-                parse_mode="Markdown",
-                disable_web_page_preview=True
+                user_id=user_id,
+                sub=sub,
+                current_state=current_state,
+                is_manual_check=True
             )
-            await set_user_last_alert_msg_id(user_id, sent_status_msg.message_id)
         except Exception as e:
             logger.warning(f"Failed to fetch initial alert state after set_oblast: {e}")
         return
