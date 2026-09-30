@@ -154,6 +154,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 pass
             return
 
+    if choice.startswith("usr_remove:"):
+        user_id = query.from_user.id
+        if not await is_admin(user_id, ADMIN_ID):
+            await query.answer("У вас немає прав для цієї дії 🚫", show_alert=True)
+            return
+        target_uid = int(choice.split(":", 1)[1])
+        from database import remove_allowed_user
+        from handlers.admin import build_users_list_view
+        await remove_allowed_user(target_uid)
+        _user_last_alert_state.pop(target_uid, None)
+        await query.answer("🗑️ Користувача видалено зі списку доступу!", show_alert=False)
+        text, kb = await build_users_list_view()
+        await query.edit_message_text(text=text, reply_markup=kb, parse_mode="HTML")
+        return
+
     # --- ОБРОБКА ТРИВОГ ТА ЛОКАЦІЇ ---
     if choice == "open_alerts":
         await query.answer()

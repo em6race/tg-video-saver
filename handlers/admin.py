@@ -393,23 +393,63 @@ async def clear_invites_command(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown"
     )
 
+import html
+
+async def build_users_list_view() -> tuple[str, InlineKeyboardMarkup]:
+    users = await get_allowed_users_list()
+    if not users:
+        text = "👥 <b>Авторизовані користувачі бота:</b>\n\nСписок користувачів порожній (окрім власника)."
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Створити запрошення", callback_data="inv_open_builder")],
+            [InlineKeyboardButton("❌ Закрити", callback_data="close_menu")]
+        ])
+        return text, kb
+
+    lines = [f"👥 <b>Авторизовані користувачі бота ({len(users)}):</b>\n"]
+    buttons = []
+    for idx, row in enumerate(users, start=1):
+        u_id = row[0]
+        uname = row[1] or ""
+        joined = (row[2] or "")[:10]
+        oblast = row[3] or ""
+        locality = row[4] or ""
+        enabled = bool(row[5]) if row[5] is not None else False
+
+        safe_uname = html.escape(uname)
+        if safe_uname:
+            u_display = f"@{safe_uname}" if not safe_uname.startswith("@") else safe_uname
+        else:
+            u_display = f"ID: <code>{u_id}</code>"
+
+        loc_parts = [p for p in [locality, oblast] if p]
+        loc_str = html.escape(", ".join(loc_parts)) if loc_parts else "локацію не обрано"
+        bell = "🟢" if enabled and oblast else "⚪"
+
+        lines.append(
+            f"{idx}. <b>{u_display}</b> (<code>{u_id}</code>)\n"
+            f"   └ {bell} 📍 {loc_str} | 📅 {joined}"
+        )
+        btn_label = f"@{uname}" if uname else f"ID {u_id}"
+        buttons.append([
+            InlineKeyboardButton(f"❌ Забрати доступ у {btn_label[:20]}", callback_data=f"usr_remove:{u_id}")
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("➕ Створити запрошення", callback_data="inv_open_builder"),
+        InlineKeyboardButton("❌ Закрити", callback_data="close_menu")
+    ])
+    return "\n".join(lines), InlineKeyboardMarkup(buttons)
+
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     if not await is_admin(user_id, ADMIN_ID):
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
-    users = await get_allowed_users_list()
-    if not users:
-        await update.message.reply_text("Список користувачів порожній (окрім адміна).")
-        return
-
-    lines = ["👥 **Авторизовані користувачі бота:**\n"]
-    for u_id, uname, joined in users:
-        u_display = f"@{uname}" if uname else f"ID: `{u_id}`"
-        lines.append(f"• {u_display} (додано: {joined[:10]})")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await delete_user_command_message(update)
+    text, kb = await build_users_list_view()
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode="HTML")
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id

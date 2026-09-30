@@ -331,8 +331,19 @@ async def clear_unused_invites() -> tuple[int, list[tuple[int, int]]]:
 
 async def get_allowed_users_list() -> list:
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT user_id, username, joined_at FROM allowed_users ORDER BY joined_at DESC") as cursor:
+        async with db.execute('''
+            SELECT u.user_id, u.username, u.joined_at, s.oblast, s.locality, s.enabled
+            FROM allowed_users u
+            LEFT JOIN alert_subscriptions s ON u.user_id = s.user_id
+            ORDER BY u.joined_at DESC
+        ''') as cursor:
             return await cursor.fetchall()
+
+async def remove_allowed_user(user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM allowed_users WHERE user_id=?", (int(user_id),))
+        await db.execute("UPDATE alert_subscriptions SET enabled=0 WHERE user_id=?", (int(user_id),))
+        await db.commit()
 
 # --- АСИНХРОННІ ПІДПИСКИ НА ПОВІТРЯНІ ТРИВОГИ ---
 
