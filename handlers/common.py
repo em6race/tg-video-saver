@@ -78,11 +78,46 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
     await update.message.reply_text(help_text, reply_markup=get_main_reply_keyboard(), parse_mode="Markdown")
 
+import time
+from telegram.error import Conflict, NetworkError, TimedOut
+
+_last_conflict_notify_time = 0.0
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Логує помилку та надсилає сповіщення адміну при виникненні винятку."""
-    logger.error("Exception while handling an update:", exc_info=context.error)
+    global _last_conflict_notify_time
 
-    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    err = context.error
+    if isinstance(err, Conflict):
+        logger.warning(f"Telegram API Conflict detected: {err}")
+        now = time.time()
+        if ADMIN_ID and (now - _last_conflict_notify_time > 600):
+            _last_conflict_notify_time = now
+            try:
+                await context.bot.send_message(
+                    chat_id=int(ADMIN_ID),
+                    text=(
+                        "⚠️ **Виявлено конфлікт запуску (Telegram Conflict)!**\n\n"
+                        "З тим самим `BOT_TOKEN` одночасно запущено **два екземпляри бота**.\n"
+                        "Перевірте:\n"
+                        "1️⃣ Чи не запущений бот паралельно на іншому хостингу (наприклад, старий сервер на Render/Railway + новий на Wispbyte).\n"
+                        "2️⃣ Чи не відкрито другий контейнер або локальний термінал із цим токеном.\n\n"
+                        "*Зупиніть зайвий екземпляр, щоб уникнути дублювання запитів.*"
+                    ),
+                    parse_mode="Markdown",
+                    disable_notification=True
+                )
+            except Exception:
+                pass
+        return
+
+    if isinstance(err, (NetworkError, TimedOut)):
+        logger.warning(f"Transient network error: {err}")
+        return
+
+    logger.error("Exception while handling an update:", exc_info=err)
+
+    tb_list = traceback.format_exception(None, err, err.__traceback__)
     tb_string = "".join(tb_list)
 
     if ADMIN_ID:

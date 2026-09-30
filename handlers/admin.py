@@ -196,5 +196,11 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception:
             pass
 
+    try:
+        if context.application.updater and context.application.updater.running:
+            await context.application.updater.stop()
+    except Exception:
+        pass
+
     await asyncio.sleep(1)
     os.execv(sys.executable, [sys.executable] + sys.argv)

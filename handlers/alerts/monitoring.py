@@ -164,5 +164,11 @@ async def auto_update(application) -> None:
             except Exception as e:
                 logger.error(f"Git pull failed: {e}")
 
+            try:
+                if application.updater and application.updater.running:
+                    await application.updater.stop()
+            except Exception:
+                pass
+
             await asyncio.sleep(2)
             os.execv(sys.executable, [sys.executable] + sys.argv)
