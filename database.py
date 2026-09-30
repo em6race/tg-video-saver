@@ -18,14 +18,6 @@ def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS file_cache (
-                url TEXT,
-                type TEXT,
-                file_id TEXT,
-                PRIMARY KEY (url, type)
-            )
-        ''')
-        cursor.execute('''
             CREATE TABLE IF NOT EXISTS allowed_users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -40,11 +32,21 @@ def init_db():
                 is_used INTEGER DEFAULT 0,
                 used_by INTEGER,
                 created_at TEXT,
-                expires_at TEXT
+                expires_at TEXT,
+                chat_id INTEGER,
+                msg_id INTEGER
             )
         ''')
         try:
             cursor.execute("ALTER TABLE invites ADD COLUMN expires_at TEXT")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE invites ADD COLUMN chat_id INTEGER")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE invites ADD COLUMN msg_id INTEGER")
         except Exception:
             pass
 
@@ -75,46 +77,6 @@ def init_db():
         except Exception:
             pass
         conn.commit()
-
-# --- АСИНХРОННИЙ КЕШ ФАЙЛІВ ---
-
-def _get_cached_file_id_sync(url: str, type: str) -> str:
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT file_id FROM file_cache WHERE url=? AND type=?", (url, type))
-        row = cursor.fetchone()
-        return row[0] if row else None
-
-def _set_cached_file_id_sync(url: str, type: str, file_id: str):
-    if not file_id:
-        return
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO file_cache (url, type, file_id)
-            VALUES (?, ?, ?)
-        ''', (url, type, file_id))
-        conn.commit()
-
-async def get_cached_file_id(url: str, type: str) -> str:
-    if aiosqlite is None:
-        return await asyncio.to_thread(_get_cached_file_id_sync, url, type)
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT file_id FROM file_cache WHERE url=? AND type=?", (url, type)) as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row else None
-
-async def set_cached_file_id(url: str, type: str, file_id: str):
-    if not file_id:
-        return
-    if aiosqlite is None:
-        return await asyncio.to_thread(_set_cached_file_id_sync, url, type, file_id)
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('''
-            INSERT OR REPLACE INTO file_cache (url, type, file_id)
-            VALUES (?, ?, ?)
-        ''', (url, type, file_id))
-        await db.commit()
 
 # --- АСИНХРОННИЙ ПРИВАТНИЙ ДОСТУП ТА ІНВАЙТИ ---
 
@@ -203,23 +165,31 @@ async def create_single_use_invite(created_by: int, duration_minutes: int = 30) 
         await db.commit()
     return code, expires_str
 
-async def redeem_invite(code: str, user_id: int, username: str = "") -> tuple[bool, str]:
+async def set_invite_message_info(code: str, chat_id: int, msg_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            UPDATE invites SET chat_id=?, msg_id=? WHERE code=?
+        ''', (int(chat_id), int(msg_id), code))
+        await db.commit()
+
+async def redeem_invite(code: str, user_id: int, username: str = "") -> tuple[bool, str, dict]:
     now = datetime.utcnow()
     now_str = now.isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT created_by, is_used, expires_at FROM invites WHERE code=?", (code,)) as cursor:
+        async with db.execute("SELECT created_by, is_used, expires_at, chat_id, msg_id FROM invites WHERE code=?", (code,)) as cursor:
             row = await cursor.fetchone()
             if not row:
-                return False, "not_found"
-            created_by, is_used, expires_at = row
+                return False, "not_found", {}
+            created_by, is_used, expires_at, chat_id, msg_id = row
+            invite_meta = {"created_by": created_by, "chat_id": chat_id, "msg_id": msg_id}
             if is_used:
-                return False, "already_used"
+                return False, "already_used", invite_meta
 
             if expires_at:
                 try:
                     exp_dt = datetime.fromisoformat(expires_at)
                     if now > exp_dt:
-                        return False, "expired"
+                        return False, "expired", invite_meta
                 except Exception:
                     pass
 
@@ -231,14 +201,17 @@ async def redeem_invite(code: str, user_id: int, username: str = "") -> tuple[bo
             VALUES (?, ?, ?, ?)
         ''', (int(user_id), username or "", created_by, now_str))
         await db.commit()
-        return True, "ok"
+        return True, "ok", invite_meta
 
-async def clear_unused_invites() -> int:
+async def clear_unused_invites() -> tuple[int, list[tuple[int, int]]]:
     async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT chat_id, msg_id FROM invites WHERE is_used=0 AND chat_id IS NOT NULL AND msg_id IS NOT NULL") as cursor:
+            rows = await cursor.fetchall()
+            msgs_to_delete = [(int(r[0]), int(r[1])) for r in rows]
         cursor = await db.execute("DELETE FROM invites WHERE is_used=0")
         deleted_count = cursor.rowcount
         await db.commit()
-        return deleted_count
+        return deleted_count, msgs_to_delete
 
 async def get_allowed_users_list() -> list:
     async with aiosqlite.connect(DB_PATH) as db:

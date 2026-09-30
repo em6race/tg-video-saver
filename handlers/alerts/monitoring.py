@@ -184,14 +184,14 @@ async def auto_update(application) -> None:
                 try:
                     notice_msg = await application.bot.send_message(
                         chat_id=int(ADMIN_ID),
-                        text="🕒 3:00 ночі. Завантажую оновлення з GitHub і перезапускаюсь... 🔄",
+                        text="🕒 3:00 ночі. Завантажую оновлення з GitHub (гілка main) і перезапускаюсь... 🔄",
                         disable_notification=True
                     )
                 except Exception:
                     pass
 
             try:
-                subprocess.run(["git", "pull"], check=True)
+                subprocess.run(["git", "pull", "origin", "main"], check=True)
             except Exception as e:
                 logger.error(f"Git pull failed: {e}")
 

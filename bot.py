@@ -1,7 +1,5 @@
 import os
-import sys
 import logging
-import re
 import asyncio
 from dotenv import load_dotenv
 from telegram import Update, BotCommand
@@ -13,7 +11,6 @@ from telegram.ext import (
     filters
 )
 
-from services.server import start_server_thread
 from handlers.common import myid_command, help_command, error_handler
 from handlers.admin import (
     start,
@@ -33,9 +30,8 @@ from handlers.alerts import (
     handle_callback_query,
     handle_unknown,
     alerts_monitoring_loop,
-    auto_update
+    auto_update,
 )
-from handlers.media import handle_url
 
 # Load environment variables
 load_dotenv()
@@ -64,7 +60,7 @@ async def post_init(application: Application) -> None:
         BotCommand("invite", "Створити запрошення (для адміна)"),
         BotCommand("clear_invites", "Видалити невикористані інвайти (адмін)"),
         BotCommand("users", "Список користувачів (для адміна)"),
-        BotCommand("restart", "Перезапустити бота (для адміна)"),
+        BotCommand("restart", "Оновити з GitHub та перезапустити (адмін)"),
     ]
     await application.bot.set_my_commands(commands)
 
@@ -72,7 +68,7 @@ async def post_init(application: Application) -> None:
         try:
             startup_msg = await application.bot.send_message(
                 chat_id=int(ADMIN_ID),
-                text="Бот успішно запущений і готовий до роботи! ✅",
+                text="Бот моніторингу тривог успішно запущений і готовий до роботи! ✅",
                 disable_notification=True
             )
 
@@ -87,24 +83,12 @@ async def post_init(application: Application) -> None:
         except Exception as e:
             logger.warning(f"Could not send startup message to admin: {e}")
 
-    # Запуск фонового моніторингу тривог та автооновлення
+    # Запуск фонового моніторингу тривог та автооновлення з GitHub
     asyncio.create_task(alerts_monitoring_loop(application))
     asyncio.create_task(auto_update(application))
 
 def main() -> None:
-    print("Starting bot with async architecture & error handler...")
-
-    downloads_dir = "downloads"
-    if os.path.exists(downloads_dir):
-        import shutil
-        try:
-            shutil.rmtree(downloads_dir)
-        except Exception as e:
-            logger.warning(f"Failed to clean up downloads directory on startup: {e}")
-    os.makedirs(downloads_dir, exist_ok=True)
-
-    # Запуск тестового HTTP-сервера для хостингу
-    start_server_thread()
+    print("Starting NEPTUN Alerts Telegram bot...")
 
     application = Application.builder().token(TOKEN).post_init(post_init).build()
 
@@ -130,12 +114,10 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.LOCATION, location_handler))
     application.add_handler(MessageHandler(filters.Regex(r"^❌ Скасувати$"), cancel_handler))
 
-    # Обробник посилань та callback кнопок
-    url_pattern = re.compile(r'https?://[^\s]+')
-    application.add_handler(MessageHandler(filters.Regex(url_pattern), handle_url))
+    # Обробник callback кнопок
     application.add_handler(CallbackQueryHandler(handle_callback_query))
 
-    # Загальний обробник текстових повідомлень
+    # Загальний обробник текстових повідомлень (кнопки меню та пошук міста)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)

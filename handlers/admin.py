@@ -13,6 +13,7 @@ from database import (
     is_admin,
     is_user_allowed,
     create_single_use_invite,
+    set_invite_message_info,
     redeem_invite,
     clear_unused_invites,
     get_allowed_users_list
@@ -48,19 +49,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-        ok, status = await redeem_invite(invite_code, user_id, username)
+        ok, status, invite_meta = await redeem_invite(invite_code, user_id, username)
         if ok:
+            if invite_meta and invite_meta.get("chat_id") and invite_meta.get("msg_id"):
+                try:
+                    await context.bot.delete_message(
+                        chat_id=int(invite_meta["chat_id"]),
+                        message_id=int(invite_meta["msg_id"])
+                    )
+                except Exception as del_err:
+                    logger.debug(f"Could not delete invite message after acceptance: {del_err}")
+
             await update.message.reply_text(
                 "🎉 **Ласкаво просимо! Доступ активовано!**\n\n"
-                "Ваше персональне запрошення успішно активовано. Тепер ви маєте повний доступ до всіх можливостей бота:\n\n"
-                "🎥 **Завантаження медіа:** просто надішліть сюди посилання на TikTok, YouTube, Instagram, Twitter(X), Spotify або SoundCloud.\n"
-                "🚨 **Повітряні тривоги:** налаштуйте сповіщення про небезпеку (🔴/🟡 рівні) для вашого міста чи району.\n\n"
+                "Ваше персональне запрошення успішно активовано. Тепер ви маєте повний доступ до моніторингу тривог:\n\n"
+                "🚨 **Повітряні тривоги:** налаштуйте сповіщення про небезпеку (🔴/🟡 рівні) для вашого міста чи району.\n"
+                "🗺️ **Карта тривог:** переглядайте актуальну HD-карту тривог та цілей у небі.\n\n"
                 "👇 **З чого почати? Оберіть дію нижче:**",
                 reply_markup=welcome_keyboard,
                 parse_mode="Markdown"
             )
             return
         elif status == "expired":
+            if invite_meta and invite_meta.get("chat_id") and invite_meta.get("msg_id"):
+                try:
+                    await context.bot.delete_message(
+                        chat_id=int(invite_meta["chat_id"]),
+                        message_id=int(invite_meta["msg_id"])
+                    )
+                except Exception:
+                    pass
             await update.message.reply_text(
                 "⏳ **Термін дії цього запрошення минув (30 хвилин).**\n\n"
                 "Посилання більше не дійсне. Будь ласка, попросіть власника бота надіслати вам нове посилання-запрошення.",
@@ -81,9 +99,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await is_user_allowed(user_id, ADMIN_ID):
         await update.message.reply_text(
             f"Привіт, {user.first_name}! 👋\n\n"
-            "Я ваш персональний бот для завантаження медіа та оперативного моніторингу повітряних тривог 🚀\n\n"
-            "📥 **Швидкий старт:**\n"
-            "• Надішліть посилання на будь-яке відео чи трек для завантаження.\n"
+            "Я ваш персональний бот для оперативного моніторингу повітряних тривог та загроз 🚨\n\n"
+            "📌 **Швидкий старт:**\n"
+            "• Натисніть **«🚨 Налаштувати тривоги»** або надішліть свою геопозицію.\n"
             "• Скористайтесь кнопками меню внизу екрана для перевірки статусу тривог, карти та налаштувань.",
             reply_markup=get_main_reply_keyboard(),
             parse_mode="Markdown"
@@ -96,14 +114,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     if not await is_admin(user_id, ADMIN_ID):
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
+    await delete_user_command_message(update)
+
     args = context.args
     if args and len(args) > 0 and args[0].lower() in ("clear", "clean", "reset", "очистити", "видалити"):
-        deleted = await clear_unused_invites()
-        await update.message.reply_text(f"🗑️ Очищено **{deleted}** невикористаних посилань-запрошень з бази даних.", parse_mode="Markdown")
+        deleted, msgs_to_delete = await clear_unused_invites()
+        for c_id, m_id in msgs_to_delete:
+            try:
+                await context.bot.delete_message(chat_id=c_id, message_id=m_id)
+            except Exception:
+                pass
+        await context.bot.send_message(chat_id=chat_id, text=f"🗑️ Очищено **{deleted}** невикористаних посилань-запрошень з бази даних.", parse_mode="Markdown")
         return
 
     code, expires_iso = await create_single_use_invite(int(user_id), duration_minutes=30)
@@ -122,23 +148,34 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("📤 Поділитися з другом", url=f"https://t.me/share/url?url={invite_url}")]
     ])
 
-    await update.message.reply_text(
-        "🎟️ <b>Персональне посилання-запрошення:</b>\n\n"
-        f"👉 <a href=\"{invite_url}\">{invite_url}</a>\n\n"
-        f"⏳ <i>Посилання дійсне протягом <b>30 хвилин</b> (до {exp_str}) та розраховане лише на <b>1 людину</b>.</i>\n\n"
-        "💡 <i>Ви можете просто переслати це повідомлення другу в інший чат — йому буде достатньо лише клікнути на посилання чи кнопку нижче!</i>",
+    sent_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "🎟️ <b>Персональне посилання-запрошення:</b>\n\n"
+            f"👉 <a href=\"{invite_url}\">{invite_url}</a>\n\n"
+            f"⏳ <i>Посилання дійсне протягом <b>30 хвилин</b> (до {exp_str}) та розраховане лише на <b>1 людину</b>.</i>\n\n"
+            "💡 <i>Ви можете просто переслати це повідомлення другу в інший чат — йому буде достатньо лише клікнути на посилання чи кнопку нижче!</i>"
+        ),
         reply_markup=share_kb,
         parse_mode="HTML",
         disable_web_page_preview=True
     )
+    await set_invite_message_info(code, sent_msg.chat_id, sent_msg.message_id)
 
 async def clear_invites_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     if not await is_admin(user_id, ADMIN_ID):
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
-    deleted = await clear_unused_invites()
-    await update.message.reply_text(f"🗑️ Видалено **{deleted}** невикористаних запрошень з бази даних.", parse_mode="Markdown")
+    await delete_user_command_message(update)
+    deleted, msgs_to_delete = await clear_unused_invites()
+    for c_id, m_id in msgs_to_delete:
+        try:
+            await context.bot.delete_message(chat_id=c_id, message_id=m_id)
+        except Exception:
+            pass
+    await context.bot.send_message(chat_id=chat_id, text=f"🗑️ Видалено **{deleted}** невикористаних запрошень з бази даних.", parse_mode="Markdown")
 
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -164,7 +201,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
-    status_msg = await update.message.reply_text("⏳ Завантажую оновлення з GitHub і перезавантажуюсь... 🔄", disable_notification=True)
+    status_msg = await update.message.reply_text("⏳ Завантажую оновлення з GitHub (гілка `main`) і перезавантажуюсь... 🔄", parse_mode="Markdown", disable_notification=True)
     await asyncio.sleep(0.5)
 
     git_output = ""

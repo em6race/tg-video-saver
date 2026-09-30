@@ -29,7 +29,6 @@ from keyboards import (
     ALERT_REFRESH_COOLDOWN,
 )
 from handlers.common import check_access, help_command
-from handlers.media import process_video, process_audio, send_typing_action
 from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
@@ -384,29 +383,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     await query.answer()
-    if not query.message.reply_to_message or not query.message.reply_to_message.text:
-        await query.edit_message_text(text="❌ Помилка: не вдалося знайти оригінальне посилання. Відправте його ще раз.")
-        return
-
-    url = query.message.reply_to_message.text
-    await query.edit_message_text(text="⏳ Завантажую, зачекайте...")
-
-    typing_task = asyncio.create_task(send_typing_action(query.message.chat_id, context))
-
-    try:
-        if choice == "yt_video":
-            await process_video(query.message.reply_to_message, context, url)
-        elif choice == "yt_audio":
-            await process_audio(query.message.reply_to_message, context, url)
-        elif choice == "yt_both":
-            await process_video(query.message.reply_to_message, context, url)
-            await process_audio(query.message.reply_to_message, context, url)
-    finally:
-        typing_task.cancel()
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
 
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -452,6 +428,6 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
     await update.message.reply_text(
-        "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram тощо) або скористайтеся меню кнопок нижче 🚨",
+        "Скористайтеся кнопками меню внизу екрана для перевірки статусу тривоги, карти або налаштування локації 🚨",
         reply_markup=get_main_reply_keyboard()
     )
