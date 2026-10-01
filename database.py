@@ -85,9 +85,20 @@ def init_db():
         except Exception:
             pass
         try:
-            cursor.execute("ALTER TABLE alert_subscriptions ADD COLUMN sound_enabled INTEGER DEFAULT 1")
+            cursor.execute("PRAGMA journal_mode=WAL")
         except Exception:
             pass
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS alert_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                chat_id INTEGER,
+                message_id INTEGER,
+                created_at TEXT
+            )
+        ''')
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_messages_user ON alert_messages(user_id)")
         conn.commit()
 
 # --- АСИНХРОННИЙ КЕШ ФАЙЛІВ (ДЛЯ ПЛАГІНА МЕДІА) ---
@@ -467,9 +478,74 @@ async def enable_user_alerts(user_id: int, chat_id: int = None) -> bool:
         await db.commit()
         return True
 
+def set_user_last_alert_msg_id_sync(user_id: int, msg_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE alert_subscriptions SET last_alert_msg_id=? WHERE user_id=?", (msg_id, int(user_id)))
+        conn.commit()
+
 async def set_user_last_alert_msg_id(user_id: int, msg_id: int):
+    if aiosqlite is None:
+        return await asyncio.to_thread(set_user_last_alert_msg_id_sync, user_id, msg_id)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE alert_subscriptions SET last_alert_msg_id=? WHERE user_id=?", (msg_id, int(user_id)))
+        await db.commit()
+
+def add_alert_message_record_sync(user_id: int, chat_id: int, message_id: int):
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO alert_messages (user_id, chat_id, message_id, created_at)
+            VALUES (?, ?, ?, ?)
+        ''', (int(user_id), int(chat_id), int(message_id), now))
+        conn.commit()
+
+async def add_alert_message_record(user_id: int, chat_id: int, message_id: int):
+    if aiosqlite is None:
+        return await asyncio.to_thread(add_alert_message_record_sync, user_id, chat_id, message_id)
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO alert_messages (user_id, chat_id, message_id, created_at)
+            VALUES (?, ?, ?, ?)
+        ''', (int(user_id), int(chat_id), int(message_id), now))
+        await db.commit()
+
+def get_user_alert_message_ids_sync(user_id: int) -> list[int]:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT message_id FROM alert_messages WHERE user_id=? ORDER BY id ASC", (int(user_id),))
+        rows = cursor.fetchall()
+        return [r[0] for r in rows if r[0]]
+
+async def get_user_alert_message_ids(user_id: int) -> list[int]:
+    if aiosqlite is None:
+        return await asyncio.to_thread(get_user_alert_message_ids_sync, user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT message_id FROM alert_messages WHERE user_id=? ORDER BY id ASC", (int(user_id),)) as cursor:
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows if r[0]]
+
+def delete_alert_message_records_sync(user_id: int, message_ids: list[int] = None):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        if message_ids:
+            placeholders = ",".join("?" for _ in message_ids)
+            cursor.execute(f"DELETE FROM alert_messages WHERE user_id=? AND message_id IN ({placeholders})", [int(user_id)] + [int(m) for m in message_ids])
+        else:
+            cursor.execute("DELETE FROM alert_messages WHERE user_id=?", (int(user_id),))
+        conn.commit()
+
+async def delete_alert_message_records(user_id: int, message_ids: list[int] = None):
+    if aiosqlite is None:
+        return await asyncio.to_thread(delete_alert_message_records_sync, user_id, message_ids)
+    async with aiosqlite.connect(DB_PATH) as db:
+        if message_ids:
+            placeholders = ",".join("?" for _ in message_ids)
+            await db.execute(f"DELETE FROM alert_messages WHERE user_id=? AND message_id IN ({placeholders})", [int(user_id)] + [int(m) for m in message_ids])
+        else:
+            await db.execute("DELETE FROM alert_messages WHERE user_id=?", (int(user_id),))
         await db.commit()
 
 async def get_user_subscription(user_id: int) -> dict:
@@ -521,7 +597,32 @@ def get_user_subscription_sync(user_id: int) -> dict:
             "sound_enabled": bool(row[10] if len(row) > 10 and row[10] is not None else 1)
         }
 
+def get_all_enabled_subscriptions_sync() -> list[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id, sound_enabled
+            FROM alert_subscriptions WHERE enabled=1 AND oblast IS NOT NULL
+        ''')
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "user_id": r[0],
+                "chat_id": r[1],
+                "oblast": r[2],
+                "raion": r[3],
+                "locality": r[4],
+                "lat": r[5],
+                "lon": r[6],
+                "last_alert_msg_id": r[7],
+                "sound_enabled": bool(r[8] if len(r) > 8 and r[8] is not None else 1)
+            })
+        return result
+
 async def get_all_enabled_subscriptions() -> list[dict]:
+    if aiosqlite is None:
+        return await asyncio.to_thread(get_all_enabled_subscriptions_sync)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute('''
             SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id, sound_enabled

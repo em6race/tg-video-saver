@@ -67,25 +67,7 @@ async def post_init(application: Application) -> None:
     ]
     await application.bot.set_my_commands(commands)
 
-    if ADMIN_ID:
-        try:
-            mode_str = "Тривоги + Медіа-плагін" if is_media_plugin_enabled() else "Тільки тривоги (NEPTUN)"
-            startup_msg = await application.bot.send_message(
-                chat_id=int(ADMIN_ID),
-                text=f"Бот успішно запущений ({mode_str}) і готовий до роботи! ✅",
-                disable_notification=True
-            )
-
-            async def _delete_startup_msg(msg):
-                await asyncio.sleep(10)
-                try:
-                    await msg.delete()
-                except Exception:
-                    pass
-
-            asyncio.create_task(_delete_startup_msg(startup_msg))
-        except Exception as e:
-            logger.warning(f"Could not send startup message to admin: {e}")
+    logger.info("Bot commands registered. Bot is ready and running.")
 
     # Запуск фонового моніторингу тривог та автооновлення з GitHub
     asyncio.create_task(alerts_monitoring_loop(application))

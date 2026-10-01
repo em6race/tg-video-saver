@@ -250,8 +250,12 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
                 )
                 edited_inplace = True
             except Exception as edit_err:
-                logger.debug(f"In-place edit on refresh failed ({edit_err}), falling back to repost...")
-                edited_inplace = False
+                err_lower = str(edit_err).lower()
+                if "message is not modified" in err_lower:
+                    edited_inplace = True
+                else:
+                    logger.debug(f"In-place edit on refresh failed ({edit_err}), falling back to repost...")
+                    edited_inplace = False
 
         if not edited_inplace:
             await repost_alert_message_to_bottom(
