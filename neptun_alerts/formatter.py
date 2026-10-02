@@ -84,10 +84,9 @@ def _format_alert_time_and_duration(iso_str: str = None) -> str:
 def make_threat_signature(state: dict) -> tuple:
     """
     Повертає кортеж-сигнатуру поточної загрози для відстеження важливих змін у фоновому моніторингу:
-    рівень, статус дорозвідки, список причин та суттєвий склад цілей (id, тип, напрямок до користувача).
+    рівень, список причин та суттєвий склад цілей (id, тип, напрямок до користувача).
     """
     level = state.get("level", "green")
-    is_dorozvidka = bool(state.get("is_dorozvidka", False))
     reasons = tuple(sorted(state.get("reasons", [])))
     threats = tuple(
         (
@@ -97,7 +96,7 @@ def make_threat_signature(state: dict) -> tuple:
         )
         for t in state.get("nearby_threats", [])
     )
-    return (level, is_dorozvidka, reasons, threats)
+    return (level, reasons, threats)
 
 def _get_threat_emoji(threat: dict) -> str:
     """Визначає найбільш точну іконку з паку для типу загрози."""
@@ -125,7 +124,35 @@ def _get_threat_emoji(threat: dict) -> str:
     if threat.get("advisory") or "ппо" in expl:
         return e("air_defense_gepard")
 
-    return e("target_unknown")
+def _get_threat_status_badge(threat: dict) -> tuple:
+    """
+    Визначає статус цілі (збито, падає/знижується, локаційно втрачено, вибух, робота ППО)
+    та повертає кортеж (badge_html, override_icon).
+    """
+    expl = (threat.get("explanation") or "").lower()
+    t_status = (threat.get("status") or "").lower()
+
+    # 1. Збиття / перехоплення / ліквідація
+    if any(w in expl for w in ["збит", "знищен", "перехоплен", "ліквідован"]) or t_status in ("down", "destroyed", "intercepted"):
+        return ("🎯 <b>[ЗБИТО]</b> ", e("burst"))
+
+    # 2. Падіння / зниження висоти
+    if any(w in expl for w in ["падає", "падают", "падінн", "знижуєт", "втрачає висоту", "низька висота"]):
+        return ("⚠️ ⬇️ <b>[ПАДАЄ / ЗНИЖУЄТЬСЯ]</b> ", e("lightning"))
+
+    # 3. Локаційно втрачено / припинив існування / РЕБ
+    if any(w in expl for w in ["локаційно втрачен", "втрачено з радар", "припинив існуван", "зник з радар"]):
+        return ("💨 <b>[ЛОКАЦІЙНО ВТРАЧЕНО]</b> ", e("target_unknown"))
+
+    # 4. Вибух / детонація
+    if any(w in expl for w in ["детонац", "вибух"]):
+        return ("💥 <b>[ВИБУХ]</b> ", e("burst"))
+
+    # 5. Робота ППО
+    if threat.get("advisory") or any(w in expl for w in ["працює ппо", "робота ппо", "вогонь ппо"]):
+        return ("⚡ <b>[РОБОТА ППО]</b> ", e("air_defense_gepard"))
+
+    return ("", "")
 
 def _get_reason_emoji(reasons_str: str, level: str) -> str:
     """Підбирає іконку для рядка 'Причина'."""
@@ -232,9 +259,10 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
                 dir_str = f"  ↳ курс {dir_arrow} {dir_name}"
 
             clean_expl = html.escape(t.get("explanation") or "Повітряна ціль")
-            t_icon = _get_threat_emoji(t)
+            badge, override_icon = _get_threat_status_badge(t)
+            t_icon = override_icon or _get_threat_emoji(t)
 
-            lines.append(f"\n• {t_icon} <b>{clean_expl}</b>{dist_str}{towards_tag}")
+            lines.append(f"\n• {t_icon} {badge}<b>{clean_expl}</b>{dist_str}{towards_tag}")
             if dir_str:
                 lines.append(f"  {html.escape(dir_str)}")
 
@@ -245,9 +273,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         for t in threats
     ) or any(w in raw_reasons_str.lower() for w in ["баліст", "кинжал", "кинджал"])
 
-    if state.get("is_dorozvidka"):
-        lines.append("\n🔍 **Триває дорозвідка повітряного простору** *(якщо нових загроз не буде — очікується відбій)* 🙏")
-    elif level == "red":
+    if level == "red":
         if has_ballistics:
             lines.append(
                 f"\n{e('air_defense_patriot')} {e('burst')} <b>УВАГА: Загроза балістики/гіперзвуку! Можлива активна робота ППО!</b> "
