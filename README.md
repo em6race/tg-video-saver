@@ -104,18 +104,38 @@ pip install -r requirements.txt
 ```
 
 ### 3. Налаштування змінних оточення (`.env`)
-Створіть файл `.env` на основі шаблону:
+Створіть файл `.env` на основі шаблону `.env.example`:
 ```env
-BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
-ADMIN_ID=1234567890
-ENABLE_MEDIA_PLUGIN=false
+# Токен вашого Telegram бота (отримати у @BotFather)
+BOT_TOKEN=your_telegram_bot_token_here
+
+# Telegram User ID адміністратора бота (отримати через команду /myid в боті)
+ADMIN_ID=123456789
+
+# ========================================================
+# Гнучке керування модулями (true / false)
+# Обидва модулі за замовчуванням увімкнені (true).
+# Якщо вам потрібен суто скачувальник — вимкніть тривоги (ENABLE_ALERTS_PLUGIN=false).
+# Якщо вам потрібен суто моніторинг тривог — вимкніть медіа (ENABLE_MEDIA_PLUGIN=false).
+# ========================================================
+
+# 1. Завантаження відео та музики (TikTok, YouTube, Instagram, Spotify, SoundCloud)
+ENABLE_MEDIA_PLUGIN=true
+
+# 2. Моніторинг повітряних тривог та радар загроз (NEPTUN API)
+ENABLE_ALERTS_PLUGIN=true
+
+# Порт для веб-сервера (якщо потрібен для хостингу Render/Railway/Koyeb)
+PORT=8080
 ```
 
 | Змінна | Опис | Обов'язкова |
 |---|---|---|
 | `BOT_TOKEN` | Токен бота, отриманий у [@BotFather](https://t.me/BotFather) | Так |
-| `ADMIN_ID` | Ваш цифровий Telegram User ID (для доступу до адмін-панелі) | Так |
-| `ENABLE_MEDIA_PLUGIN` | `true` — увімкнути завантажувач медіа; `false` — режим лише тривог | Ні (за замовчуванням `false`) |
+| `ADMIN_ID` | Ваш числовий Telegram User ID (для доступу до адмін-панелі) | Так |
+| `ENABLE_MEDIA_PLUGIN` | `true` — увімкнути завантажувач медіа; `false` — вимкнути для економії CPU/RAM (~38 МБ) | Ні (за замовчуванням `true`) |
+| `ENABLE_ALERTS_PLUGIN` | `true` — увімкнути моніторинг тривог; `false` — вимкнути (режим суто завантажувача) | Ні (за замовчуванням `true`) |
+| `PORT` | Порт HTTP-сервера для хмарних сервісів із health-check (Render/Koyeb) | Ні (за замовчуванням `8080`) |
 
 ### 4. Запуск бота
 ```bash
