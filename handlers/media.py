@@ -155,8 +155,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not await check_access(update, context):
         return
 
-    url = update.message.text
+    import re
+    raw_text = update.message.text.strip() if update.message and update.message.text else ""
+    url_match = re.search(r"https?://[^\s]+", raw_text)
+    url = url_match.group(0) if url_match else raw_text
     await clean_old_downloads()
+
 
     try:
         supported_domains = [

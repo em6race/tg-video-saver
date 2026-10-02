@@ -569,6 +569,16 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
 
+    if text.startswith("http://") or text.startswith("https://") or "://" in text:
+        if not is_media_plugin_enabled():
+            await update.message.reply_text(
+                "ℹ️ **Модуль завантаження медіа зараз вимкнено** (`ENABLE_MEDIA_PLUGIN=false`).\n\n"
+                "Щоб завантажувати треки та відео з TikTok, YouTube, Spotify тощо, увімкніть його в `.env` (`ENABLE_MEDIA_PLUGIN=true`) та перезапустіть бота 🚀",
+                parse_mode="Markdown",
+                reply_markup=get_main_reply_keyboard()
+            )
+            return
+
     hint = (
         "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram, Spotify) або скористайтеся меню кнопок нижче 🚨"
         if is_media_plugin_enabled()

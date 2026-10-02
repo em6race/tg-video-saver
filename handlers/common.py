@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 def is_media_plugin_enabled() -> bool:
     """Перевіряє, чи увімкнено плагін завантаження медіа (TikTok/YouTube/Spotify) у .env."""
-    return os.getenv("ENABLE_MEDIA_PLUGIN", "false").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv("ENABLE_MEDIA_PLUGIN", "true").strip().lower() in ("1", "true", "yes", "on")
+
 
 async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Перевіряє, чи має користувач доступ до бота (приватний режим)."""
