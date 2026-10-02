@@ -21,7 +21,7 @@ from database import (
     clear_unused_invites,
     get_allowed_users_list,
 )
-from handlers.common import delete_user_command_message, is_media_plugin_enabled
+from handlers.common import delete_user_command_message, is_media_plugin_enabled, is_alerts_plugin_enabled
 from keyboards import get_main_reply_keyboard
 
 load_dotenv()
@@ -154,11 +154,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = user.id
     username = user.username or user.first_name or ""
 
-    welcome_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚨 Налаштувати тривоги", callback_data="open_alerts")],
-        [InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")],
-        [InlineKeyboardButton("❓ Докладна інструкція", callback_data="open_help")]
-    ])
+    welcome_buttons = []
+    if is_alerts_plugin_enabled():
+        welcome_buttons.append([InlineKeyboardButton("🚨 Налаштувати тривоги", callback_data="open_alerts")])
+        welcome_buttons.append([InlineKeyboardButton("🗺️ Карта тривог України", callback_data="alerts_map_refresh")])
+    welcome_buttons.append([InlineKeyboardButton("❓ Докладна інструкція", callback_data="open_help")])
+    welcome_keyboard = InlineKeyboardMarkup(welcome_buttons)
+
 
     args = context.args
     if args and len(args) > 0 and args[0].startswith("invite_"):
@@ -209,12 +211,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "🎥 **Завантаження медіа:** надсилайте посилання на TikTok, YouTube, Instagram, Spotify.\n"
                 if is_media_plugin_enabled() else ""
             )
+            alerts_line = (
+                "🚨 **Повітряні тривоги:** налаштуйте сповіщення про небезпеку (🔴/🟡 рівні) для вашого міста чи району.\n"
+                "🗺️ **Карта тривог:** переглядайте актуальну HD-карту тривог та цілей у небі.\n"
+                if is_alerts_plugin_enabled() else ""
+            )
             await update.message.reply_text(
                 "🎉 **Ласкаво просимо! Доступ активовано!**\n\n"
-                "Ваше запрошення успішно активовано. Тепер ви маєте повний доступ до бота:\n\n"
+                "Ваше запрошення успішно активовано. Тепер ви маєте доступ до бота:\n\n"
                 f"{media_line}"
-                "🚨 **Повітряні тривоги:** налаштуйте сповіщення про небезпеку (🔴/🟡 рівні) для вашого міста чи району.\n"
-                "🗺️ **Карта тривог:** переглядайте актуальну HD-карту тривог та цілей у небі.\n\n"
+                f"{alerts_line}\n"
                 "👇 **З чого почати? Оберіть дію нижче:**",
                 reply_markup=welcome_keyboard,
                 parse_mode="Markdown"
@@ -247,17 +253,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
     if await is_user_allowed(user_id, ADMIN_ID):
-        media_hint = (
-            "• Надішліть посилання на відео чи трек для завантаження.\n"
-            if is_media_plugin_enabled() else ""
-        )
+        features_desc = []
+        if is_media_plugin_enabled():
+            features_desc.append("завантаження музики та відео (TikTok, YouTube, Spotify)")
+        if is_alerts_plugin_enabled():
+            features_desc.append("оперативного моніторингу повітряних тривог 🚨")
+
+        desc_str = " та ".join(features_desc) if features_desc else "ваших щоденних завдань"
+
+        quick_start_lines = []
+        if is_media_plugin_enabled():
+            quick_start_lines.append("• Надішліть посилання на відео чи трек для завантаження 🎬🎵")
+        if is_alerts_plugin_enabled():
+            quick_start_lines.append("• Натисніть **«🚨 Налаштувати тривоги»** або надішліть свою геопозицію 📍")
+            quick_start_lines.append("• Скористайтесь кнопками меню внизу екрана для перевірки статусу тривог та карти.")
+        if not quick_start_lines:
+            quick_start_lines.append("• Скористайтесь командою /help для перегляду можливостей бота.")
+
         await update.message.reply_text(
             f"Привіт, {user.first_name}! 👋\n\n"
-            "Я ваш персональний бот для оперативного моніторингу повітряних тривог та загроз 🚨\n\n"
+            f"Я ваш персональний бот для {desc_str}.\n\n"
             "📌 **Швидкий старт:**\n"
-            f"{media_hint}"
-            "• Натисніть **«🚨 Налаштувати тривоги»** або надішліть свою геопозицію.\n"
-            "• Скористайтесь кнопками меню внизу екрана для перевірки статусу тривог, карти та налаштувань.",
+            + "\n".join(quick_start_lines),
             reply_markup=get_main_reply_keyboard(),
             parse_mode="Markdown"
         )

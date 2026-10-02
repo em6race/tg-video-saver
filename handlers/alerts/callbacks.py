@@ -31,7 +31,13 @@ from keyboards import (
     get_main_reply_keyboard,
     ALERT_REFRESH_COOLDOWN,
 )
-from handlers.common import check_access, help_command, is_media_plugin_enabled, ADMIN_ID
+from handlers.common import (
+    check_access,
+    help_command,
+    is_media_plugin_enabled,
+    is_alerts_plugin_enabled,
+    ADMIN_ID,
+)
 from handlers.admin import (
     get_invite_builder_keyboard,
     send_created_invite_message,
@@ -65,8 +71,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     choice = query.data or ""
 
+    if choice.startswith("inv_") or choice.startswith("usr_remove:"):
+        pass
+    elif choice in ("yt_video", "yt_audio", "yt_both"):
+        pass
+    elif not is_alerts_plugin_enabled():
+        await query.answer("ℹ️ Модуль повітряних тривог зараз вимкнено в налаштуваннях бота.", show_alert=True)
+        return
+
     # --- ОБРОБКА КОНСТРУКТОРА ТА СПИСКУ ІНВАЙТІВ (ДЛЯ АДМІНА) ---
     if choice.startswith("inv_"):
+
         user_id = query.from_user.id
         chat_id = query.message.chat_id
         if not await is_admin(user_id, ADMIN_ID):
@@ -531,13 +546,22 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if text in ("📊 Статус тривоги", "Статус тривоги", "/status", "/check"):
-        await status_command(update, context)
+        if is_alerts_plugin_enabled():
+            await status_command(update, context)
+        else:
+            await update.message.reply_text("ℹ️ Модуль повітряних тривог зараз вимкнено (`ENABLE_ALERTS_PLUGIN=false`).")
         return
     elif text in ("🗺️ Карта тривог", "Карта тривог", "/map"):
-        await map_command(update, context)
+        if is_alerts_plugin_enabled():
+            await map_command(update, context)
+        else:
+            await update.message.reply_text("ℹ️ Модуль повітряних тривог зараз вимкнено (`ENABLE_ALERTS_PLUGIN=false`).")
         return
     elif text in ("🚨 Налаштувати тривоги", "Налаштувати тривоги", "/alerts"):
-        await alerts_command(update, context)
+        if is_alerts_plugin_enabled():
+            await alerts_command(update, context)
+        else:
+            await update.message.reply_text("ℹ️ Модуль повітряних тривог зараз вимкнено (`ENABLE_ALERTS_PLUGIN=false`).")
         return
     elif text in ("❓ Довідка", "❓ Довідка та допомога", "Довідка", "/help"):
         await help_command(update, context)
@@ -546,9 +570,11 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     sub = await get_user_subscription(user_id)
 
-    # Шукаємо населений пункт, якщо увімкнено очікування локації АБО якщо користувач просто вписав назву міста
-    should_try_geocode = (sub and sub.get("awaiting_location")) or (
-        not is_media_plugin_enabled() and len(text) <= 60 and not text.startswith("http")
+    # Шукаємо населений пункт, тільки якщо увімкнено плагін тривог
+    should_try_geocode = is_alerts_plugin_enabled() and (
+        (sub and sub.get("awaiting_location")) or (
+            not is_media_plugin_enabled() and len(text) <= 60 and not text.startswith("http")
+        )
     )
 
     if should_try_geocode:
@@ -579,9 +605,16 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
 
-    hint = (
-        "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram, Spotify) або скористайтеся меню кнопок нижче 🚨"
-        if is_media_plugin_enabled()
-        else "Напишіть назву вашого міста для налаштування тривог або скористайтеся кнопками меню внизу екрана 🚨"
-    )
+    hint_parts = []
+    if is_media_plugin_enabled():
+        hint_parts.append("надішліть посилання на медіа (TikTok, YouTube, Instagram, Spotify)")
+    if is_alerts_plugin_enabled():
+        hint_parts.append("напишіть назву вашого міста для налаштування тривог або скористайтеся кнопками меню нижче")
+
+    if hint_parts:
+        hint = f"Будь ласка, {' або '.join(hint_parts)} 💡"
+    else:
+        hint = "Всі додаткові модулі вимкнено. Скористайтесь /help для перегляду довідки ℹ️"
+
     await update.message.reply_text(hint, reply_markup=get_main_reply_keyboard())
+

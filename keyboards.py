@@ -21,17 +21,28 @@ def get_alert_inline_keyboard(sound_enabled: bool = True) -> InlineKeyboardMarku
     ])
 
 def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
-    """Повертає постійну меню-клавіатуру внизу екрана Telegram."""
-    return ReplyKeyboardMarkup([
-        [
-            KeyboardButton("📊 Статус тривоги"),
-            KeyboardButton("🗺️ Карта тривог")
-        ],
-        [
-            KeyboardButton("🚨 Налаштувати тривоги"),
-            KeyboardButton("❓ Довідка")
-        ],
-        [
-            KeyboardButton("📍 Надіслати мою геопозицію", request_location=True)
-        ]
-    ], resize_keyboard=True)
+    """Повертає адаптивну меню-клавіатуру внизу екрана Telegram залежно від конфігурації плагінів."""
+    import os
+    alerts_on = os.getenv("ENABLE_ALERTS_PLUGIN", "true").strip().lower() in ("1", "true", "yes", "on")
+
+    if alerts_on:
+        return ReplyKeyboardMarkup([
+            [
+                KeyboardButton("📊 Статус тривоги"),
+                KeyboardButton("🗺️ Карта тривог")
+            ],
+            [
+                KeyboardButton("🚨 Налаштувати тривоги"),
+                KeyboardButton("❓ Довідка")
+            ],
+            [
+                KeyboardButton("📍 Надіслати мою геопозицію", request_location=True)
+            ]
+        ], resize_keyboard=True)
+    else:
+        return ReplyKeyboardMarkup([
+            [
+                KeyboardButton("❓ Довідка")
+            ]
+        ], resize_keyboard=True)
+
