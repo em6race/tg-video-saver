@@ -216,6 +216,38 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
 
     nearby_threats.sort(key=lambda x: (not x.is_towards_user, x.distance_km if x.distance_km is not None else 9999))
 
+    is_dorozvidka = False
+    for r in reasons:
+        if "дорозвід" in str(r).lower():
+            is_dorozvidka = True
+            break
+
+    if not is_dorozvidka:
+        for a in matched_alerts:
+            for r in a.get("reasons", []):
+                if "дорозвід" in str(r).lower():
+                    is_dorozvidka = True
+                    break
+            if is_dorozvidka:
+                break
+
+    if not is_dorozvidka:
+        for t in threats_data.get("threats", []):
+            if t.get("status") != "active":
+                continue
+            t_region = t.get("region", "")
+            t_lat = t.get("lat")
+            t_lon = t.get("lon")
+            in_same_oblast = _match_oblast(user_oblast, t_region)
+            dist_km = None
+            if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None:
+                dist_km = round(haversine_km(user_lat, user_lon, t_lat, t_lon))
+            if in_same_oblast or (dist_km is not None and dist_km <= 150):
+                t_text = f"{t.get('explanationShort', '')} {t.get('title', '')}".lower()
+                if "дорозвід" in t_text:
+                    is_dorozvidka = True
+                    break
+
     if level != "green" and not reasons:
         if level == "red":
             reasons.append("Ракетна або дронова загроза")
@@ -228,6 +260,7 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         reasons=reasons,
         since=since_time,
         matched_names=matched_names,
-        nearby_threats=nearby_threats[:5]
+        nearby_threats=nearby_threats[:5],
+        is_dorozvidka=is_dorozvidka
     )
     return state_obj.to_dict()

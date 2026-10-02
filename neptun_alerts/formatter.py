@@ -40,9 +40,10 @@ def _format_alert_time_and_duration(iso_str: str = None) -> str:
 def make_threat_signature(state: dict) -> tuple:
     """
     Повертає кортеж-сигнатуру поточної загрози для відстеження важливих змін у фоновому моніторингу:
-    рівень, список причин та суттєвий склад цілей (id, тип, напрямок до користувача).
+    рівень, статус дорозвідки, список причин та суттєвий склад цілей (id, тип, напрямок до користувача).
     """
     level = state.get("level", "green")
+    is_dorozvidka = bool(state.get("is_dorozvidka", False))
     reasons = tuple(sorted(state.get("reasons", [])))
     threats = tuple(
         (
@@ -52,7 +53,7 @@ def make_threat_signature(state: dict) -> tuple:
         )
         for t in state.get("nearby_threats", [])
     )
-    return (level, reasons, threats)
+    return (level, is_dorozvidka, reasons, threats)
 
 def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, prev_level: str = None) -> str:
     """
@@ -146,7 +147,9 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         for t in threats
     ) or any(w in reasons_str.lower() for w in ["баліст", "кинжал", "кинджал"])
 
-    if level == "red":
+    if state.get("is_dorozvidka"):
+        lines.append("\n🔍 **Триває дорозвідка повітряного простору** *(якщо нових загроз не буде — очікується відбій)* 🙏")
+    elif level == "red":
         if has_ballistics:
             lines.append("\n💥 🛡️ **УВАГА: При загрозі балістики/гіперзвуку можлива активна робота ППО!** Перебувайте в укриттях через критично високу швидкість цілей та загрозу падіння уламків! 🙏")
         else:
