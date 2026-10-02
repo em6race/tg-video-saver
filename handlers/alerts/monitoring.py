@@ -7,14 +7,7 @@ import subprocess
 from datetime import datetime
 import pytz
 
-from database import (
-    set_user_last_alert_msg_id,
-    get_all_enabled_subscriptions,
-    get_user_subscription,
-    add_alert_message_record,
-    get_user_alert_message_ids,
-    delete_alert_message_records,
-)
+from database import set_user_last_alert_msg_id, get_all_enabled_subscriptions, get_user_subscription
 from neptun_alerts import (
     fetch_neptun_data,
     evaluate_user_alert_state,
@@ -32,22 +25,14 @@ logger = logging.getLogger(__name__)
 ADMIN_ID = os.getenv("ADMIN_ID")
 
 async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: dict, current_state: dict, is_manual_check: bool = False, prev_level: str = None, extra_msg_id_to_delete: int = None) -> None:
-    """Видаляє всі попередні повідомлення тривоги та надсилає ОДНЕ НОВЕ насамкінець чату."""
-    msg_ids_to_delete = set()
-
-    # 1. Повідомлення з історії БД
-    try:
-        stored_history_ids = await get_user_alert_message_ids(user_id)
-        for mid in stored_history_ids:
-            if mid:
-                msg_ids_to_delete.add(mid)
-    except Exception as e:
-        logger.debug(f"Error fetching alert history IDs for user {user_id}: {e}")
-
-    # 2. Поточний last_alert_msg_id з пам'яті або БД
+    """Видаляє попереднє повідомлення тривоги та надсилає НОВЕ насамкінець чату."""
     last_msg_id = sub.get("last_alert_msg_id") if sub else None
+
+    msg_ids_to_delete = set()
     if last_msg_id:
         msg_ids_to_delete.add(last_msg_id)
+    if extra_msg_id_to_delete:
+        msg_ids_to_delete.add(extra_msg_id_to_delete)
 
     try:
         fresh_sub = await get_user_subscription(user_id)
@@ -56,27 +41,11 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
     except Exception:
         pass
 
-    # 3. Додаткове повідомлення (наприклад, з якого натиснули кнопку)
-    if extra_msg_id_to_delete:
-        msg_ids_to_delete.add(extra_msg_id_to_delete)
-
-    deleted_ids = []
     for m_id in msg_ids_to_delete:
         try:
             await bot.delete_message(chat_id=chat_id, message_id=m_id)
-            deleted_ids.append(m_id)
         except Exception as del_err:
-            err_text = str(del_err).lower()
-            if "message to delete not found" in err_text or "message can't be deleted" in err_text:
-                deleted_ids.append(m_id)
-            else:
-                logger.warning(f"Could not delete old alert message {m_id} for user {user_id}: {del_err}")
-
-    if deleted_ids:
-        try:
-            await delete_alert_message_records(user_id, deleted_ids)
-        except Exception as e:
-            logger.debug(f"Failed to prune deleted alert messages from DB: {e}")
+            logger.debug(f"Could not delete old alert message {m_id} for user {user_id}: {del_err}")
 
     sound_enabled = sub.get("sound_enabled", True) if sub else True
     msg_text = format_alert_message(sub, current_state, is_manual_check=is_manual_check, prev_level=prev_level)
@@ -88,14 +57,13 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
             chat_id=chat_id,
             text=msg_text,
             reply_markup=alert_kb,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             disable_notification=is_silent,
             disable_web_page_preview=True
         )
         if sub is not None:
             sub["last_alert_msg_id"] = sent_msg.message_id
         await set_user_last_alert_msg_id(user_id, sent_msg.message_id)
-        await add_alert_message_record(user_id, chat_id, sent_msg.message_id)
     except Exception as send_err:
         logger.warning(f"Could not repost alert message to bottom for {chat_id}: {send_err}")
 
@@ -137,7 +105,7 @@ async def alerts_monitoring_loop(application) -> None:
                                         message_id=last_msg_id,
                                         text=msg_text,
                                         reply_markup=alert_kb,
-                                        parse_mode="Markdown",
+                                        parse_mode="HTML",
                                         disable_web_page_preview=True
                                     )
                                     continue
@@ -184,15 +152,12 @@ async def alerts_monitoring_loop(application) -> None:
                                             message_id=last_msg_id,
                                             text=msg_text,
                                             reply_markup=alert_kb,
-                                            parse_mode="Markdown",
+                                            parse_mode="HTML",
                                             disable_web_page_preview=True
                                         )
                                     except Exception as edit_err:
-                                        err_lower = str(edit_err).lower()
-                                        if "message is not modified" in err_lower:
-                                            pass
-                                        elif "message to edit not found" in err_lower or "message can't be edited" in err_lower:
-                                            logger.info(f"Alert message was removed by user, reposting: {edit_err}")
+                                        if "message is not modified" not in str(edit_err).lower():
+                                            logger.debug(f"In-place edit failed ({edit_err}), reposting...")
                                             await repost_alert_message_to_bottom(
                                                 bot=application.bot,
                                                 chat_id=chat_id,
@@ -202,8 +167,6 @@ async def alerts_monitoring_loop(application) -> None:
                                                 is_manual_check=False,
                                                 prev_level=prev_level
                                             )
-                                        else:
-                                            logger.warning(f"Routine in-place alert edit failed temporarily: {edit_err}")
 
         except Exception as e:
             logger.error(f"Error in alerts monitoring loop: {e}")
@@ -216,12 +179,27 @@ async def auto_update(application) -> None:
         await asyncio.sleep(60)
         now = datetime.now(tz)
         if now.hour == 3 and now.minute == 0:
-            logger.info("3:00 AM: performing automated git pull and restart...")
+            notice_msg = None
+            if ADMIN_ID:
+                try:
+                    notice_msg = await application.bot.send_message(
+                        chat_id=int(ADMIN_ID),
+                        text="🕒 3:00 ночі. Завантажую оновлення з GitHub (гілка main) і перезапускаюсь... 🔄",
+                        disable_notification=True
+                    )
+                except Exception:
+                    pass
 
             try:
                 subprocess.run(["git", "pull", "origin", "main"], check=True)
             except Exception as e:
                 logger.error(f"Git pull failed: {e}")
+
+            if notice_msg:
+                try:
+                    await notice_msg.delete()
+                except Exception:
+                    pass
 
             try:
                 if application.updater and application.updater.running:

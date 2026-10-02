@@ -1,7 +1,51 @@
+import html
 from datetime import datetime
 import pytz
 
-from .evaluator import _clean_reason, _escape_markdown
+from .evaluator import _clean_reason
+
+# Карта кастомних емодзі з паків @monitorwarr та PS_WAR_NEW
+# Якщо у бота є доступ до Premium — Telegram покаже стилізовану іконку.
+# Якщо немає — Telegram автоматично покаже fallback Unicode емодзі.
+CUSTOM_EMOJIS = {
+    # Рівні тривоги
+    "alert_red": ("5343853332509243087", "🚨"),      # Червоний трикутник тривоги з тризубом
+    "alert_yellow": ("5344060457307094045", "⚠️"),   # Жовтий трикутник небезпеки
+    "shield_green": ("5343624711400077475", "🟢"),   # Зелений щит спокою / відбою
+    "siren": ("5237802734475820637", "📢"),          # Гучномовець / сирена
+    
+    # Інтерфейс та статус
+    "pin": ("5240472408837601851", "📍"),            # Карта з міткою
+    "radar": ("5442668495491837532", "📡"),          # Радар моніторингу
+    "trident": ("5344036285231151054", "🔱"),        # Золотий Тризуб
+    "flag_ua": ("5202137240150486571", "🇺🇦"),        # Прапор України
+    "lightning": ("5217852946393346015", "⚡"),      # Блискавка / терміново
+    "burst": ("5217800771130632659", "💥"),          # Вибух / розрив
+    
+    # Цілі
+    "shahed": ("5201712313266119903", "🛵"),         # Shahed-136 (чорний нічний)
+    "drone_recon": ("5237922680027496419", "🛸"),    # Розвід-БПЛА Supercam
+    "missile_cruise": ("5393250541654530016", "🚀"), # Крилата ракета Х-101 / Калібр
+    "missile_ballistic": ("5409320320706303601", "☄️"), # Балістика Іскандер-М
+    "missile_kinzhal": ("5264948654363393239", "🚀"),  # Гіперзвуковий Кинджал
+    "plane_mig31": ("5406623811388851062", "✈️"),    # МіГ-31К
+    "plane_su34": ("5377781031527006892", "✈️"),     # Тактична авіація Су-34
+    "plane_bomber": ("5373091455520750612", "✈️"),   # Стратегічний бомбардувальник Ту-95
+    "bomb_kab": ("5471895550372634802", "💣"),       # Авіабомба КАБ
+    "target_unknown": ("5264711486269317317", "⚠️"), # Невідома ціль
+    
+    # Захист / ППО
+    "air_defense_patriot": ("5289486657223934256", "🛡️"), # Patriot ЗРК
+    "air_defense_gepard": ("5287674730780835511", "⚡"),   # Gepard зенітка
+}
+
+def e(key: str) -> str:
+    """Повертає HTML-тег <tg-emoji> для кастомного емодзі з fallback-значенням."""
+    item = CUSTOM_EMOJIS.get(key)
+    if not item:
+        return ""
+    cid, fb = item
+    return f'<tg-emoji emoji-id="{cid}">{fb}</tg-emoji>'
 
 def _format_kyiv_time(iso_str: str = None) -> str:
     tz = pytz.timezone("Europe/Kiev")
@@ -30,7 +74,7 @@ def _format_alert_time_and_duration(iso_str: str = None) -> str:
         elif minutes > 0:
             dur_str = f"{minutes} хв"
         else:
-            dur_str = "< 1 хв"
+            dur_str = "&lt; 1 хв"
 
         start_time_str = start_dt.strftime("%H:%M")
         return f"{dur_str} (з {start_time_str})"
@@ -55,9 +99,58 @@ def make_threat_signature(state: dict) -> tuple:
     )
     return (level, is_dorozvidka, reasons, threats)
 
+def _get_threat_emoji(threat: dict) -> str:
+    """Визначає найбільш точну іконку з паку для типу загрози."""
+    t_type = (threat.get("type") or "").lower()
+    expl = (threat.get("explanation") or "").lower()
+
+    if any(w in expl for w in ["міг-31", "міг31", "миг-31"]):
+        return e("plane_mig31")
+    if any(w in expl for w in ["ту-95", "ту-22", "ту-160", "стратег"]):
+        return e("plane_bomber")
+    if any(w in expl for w in ["каб", "фаб", "бомб"]):
+        return e("bomb_kab")
+    if any(w in expl for w in ["кинжал", "кинджал"]):
+        return e("missile_kinzhal")
+    if t_type in ("ballistic", "kinzhal", "mig31k") or any(w in expl for w in ["баліст", "іскандер-м", "іскандер"]):
+        return e("missile_ballistic")
+    if t_type in ("shahed", "drone", "uav") or any(w in expl for w in ["шахед", "shahed", "мопед", "дрон", "бпла"]):
+        if any(w in expl for w in ["розвід", "supercam", "zala", "орлан"]):
+            return e("drone_recon")
+        return e("shahed")
+    if t_type in ("missile", "cruise") or any(w in expl for w in ["ракет", "калібр", "х-101", "х-59", "х-69"]):
+        return e("missile_cruise")
+    if t_type in ("aviation", "plane") or any(w in expl for w in ["су-34", "су-35", "авіац", "борт"]):
+        return e("plane_su34")
+    if threat.get("advisory") or "ппо" in expl:
+        return e("air_defense_gepard")
+
+    return e("target_unknown")
+
+def _get_reason_emoji(reasons_str: str, level: str) -> str:
+    """Підбирає іконку для рядка 'Причина'."""
+    r_lower = reasons_str.lower()
+    if any(w in r_lower for w in ["міг-31", "міг31"]):
+        return e("plane_mig31")
+    if any(w in r_lower for w in ["баліст", "іскандер"]):
+        return e("missile_ballistic")
+    if any(w in r_lower for w in ["кинжал", "кинджал"]):
+        return e("missile_kinzhal")
+    if any(w in r_lower for w in ["каб", "фаб", "бомб"]):
+        return e("bomb_kab")
+    if any(w in r_lower for w in ["шахед", "shahed", "бпла", "дрон"]):
+        return e("shahed")
+    if any(w in r_lower for w in ["ракет"]):
+        return e("missile_cruise")
+    if any(w in r_lower for w in ["авіац"]):
+        return e("plane_su34")
+    
+    return e("alert_red") if level == "red" else e("alert_yellow")
+
 def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, prev_level: str = None) -> str:
     """
-    Формує повідомлення для користувача з кольоровим рівнем, причиною, векторами цілей та загрозою.
+    Формує повідомлення для користувача в HTML-форматі з кольоровим рівнем,
+    причиною, векторами цілей та кастомними емодзі Telegram.
     """
     oblast = sub.get("oblast") or "Невідома область"
     raion = sub.get("raion") or ""
@@ -69,11 +162,11 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         p_clean = p.replace(" область", " обл.").replace(" район", " р-н")
         if p_clean not in unique_loc:
             unique_loc.append(p_clean)
-    loc_display = ", ".join(unique_loc)
+    loc_display = html.escape(", ".join(unique_loc))
 
-    level = state["level"]
-    reasons = state["reasons"]
-    threats = state["nearby_threats"]
+    level = state.get("level", "green")
+    reasons = state.get("reasons", [])
+    threats = state.get("nearby_threats", [])
     duration_str = _format_alert_time_and_duration(state.get("since"))
 
     cleaned_reasons = []
@@ -82,44 +175,48 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         if cr and cr not in cleaned_reasons:
             cleaned_reasons.append(cr)
 
-    reasons_str = ", ".join(cleaned_reasons) if cleaned_reasons else ("Ракетна або дронова загроза" if level == "red" else "Підвищена небезпека")
+    raw_reasons_str = ", ".join(cleaned_reasons) if cleaned_reasons else (
+        "Ракетна або дронова загроза" if level == "red" else "Підвищена небезпека"
+    )
+    reasons_display = html.escape(raw_reasons_str)
+    reason_icon = _get_reason_emoji(raw_reasons_str, level)
 
     lines = []
 
+    # 1. Заголовок рівня загрози
     if level == "red":
         if prev_level == "yellow" and not is_manual_check:
-            lines.append("🔴 **УВАГА! РІВЕНЬ ЗАГРОЗИ ПІДВИЩЕНО ДО ЧЕРВОНОГО!** 🚨")
+            lines.append(f"{e('lightning')} {e('alert_red')} <b>УВАГА! РІВЕНЬ ЗАГРОЗИ ПІДВИЩЕНО ДО ЧЕРВОНОГО!</b>")
         else:
-            lines.append("🔴 **ПОВІТРЯНА ТРИВОГА! (Червоний рівень)** 🚨")
-        lines.append(f"📍 **Локація:** {loc_display}")
-        lines.append(f"❓ **Чому тривога:** {reasons_str}")
-        lines.append(f"🕒 **Тривога триває:** {duration_str}")
+            lines.append(f"{e('alert_red')} <b>ПОВІТРЯНА ТРИВОГА! (Червоний рівень)</b>")
+        lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+        lines.append(f"{reason_icon} <b>Причина:</b> {reasons_display}")
+        lines.append(f"🕒 <b>Тривога триває:</b> {duration_str}")
     elif level == "yellow":
         if prev_level == "red" and not is_manual_check:
-            lines.append("🟡 **Рівень загрози знижено до ЖОВТОГО (Підвищена увага)** ⚠️")
+            lines.append(f"{e('alert_yellow')} <b>Рівень загрози знижено до ЖОВТОГО (Підвищена увага)</b>")
         else:
-            lines.append("🟡 **ПІДВИЩЕНА НЕБЕЗПЕКА! (Жовтий рівень)** ⚠️")
-        lines.append(f"📍 **Локація:** {loc_display}")
-        lines.append(f"❓ **Причина:** {reasons_str}")
-        lines.append(f"🕒 **Загроза триває:** {duration_str}")
+            lines.append(f"{e('alert_yellow')} <b>ПІДВИЩЕНА НЕБЕЗПЕКА! (Жовтий рівень)</b>")
+        lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+        lines.append(f"{reason_icon} <b>Причина:</b> {reasons_display}")
+        lines.append(f"🕒 <b>Загроза триває:</b> {duration_str}")
     else:
         if is_manual_check:
-            lines.append("🟢 **Наразі у вашому районі СПОКІЙНО (Тривоги немає)** ✅")
-            lines.append(f"📍 **Локація:** {loc_display}")
+            lines.append(f"{e('shield_green')} <b>Наразі у вашому районі СПОКІЙНО (Тривоги немає)</b>")
+            lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+            lines.append(f"{e('radar')} <b>Радар:</b> Прямих загроз чи цілей у радіусі спостереження не виявлено.")
         else:
-            lines.append("🟢 **ВІДБІЙ ПОВІТРЯНОЇ ТРИВОГИ!** ✅")
-            lines.append(f"📍 **Локація:** {loc_display}")
-            lines.append(f"🕒 **Час відбою:** {_format_kyiv_time()}")
+            lines.append(f"{e('shield_green')} <b>ВІДБІЙ ПОВІТРЯНОЇ ТРИВОГИ!</b>")
+            lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+            lines.append(f"🕒 <b>Час відбою:</b> {_format_kyiv_time()}")
+            lines.append(f"\n{e('trident')} {e('flag_ua')} <i>Небезпека минула. Дякуємо силам ППО!</i>")
 
+    # 2. Блок цілей на підльоті
     if threats:
-        lines.append("\n🛸 **Зафіксовані цілі поруч / в області:**")
-        towards_count = 0
+        lines.append(f"\n{e('radar')} <b>Зафіксовані цілі поруч / в області:</b>")
         for t in threats:
-            dist_str = f" *(~{t['distance_km']} км)*" if t.get("distance_km") is not None else ""
-            towards_tag = " ⚠️ *у ваш бік!*" if t.get("is_towards_user") else ""
-
-            if t.get("is_towards_user"):
-                towards_count += 1
+            dist_str = f" <i>(~{t['distance_km']} км)</i>" if t.get("distance_km") is not None else ""
+            towards_tag = " ⚠️ <b>у ваш бік!</b>" if t.get("is_towards_user") else ""
 
             rel_arrow = t.get("relative_dir_arrow") or ""
             rel_name = t.get("relative_dir_name") or ""
@@ -134,29 +231,36 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
             elif dir_name:
                 dir_str = f"  ↳ курс {dir_arrow} {dir_name}"
 
-            clean_expl = _escape_markdown(t['explanation'])
-            icon = "🛡️" if (t.get("advisory") or "ппо" in clean_expl.lower()) else "•"
+            clean_expl = html.escape(t.get("explanation") or "Повітряна ціль")
+            t_icon = _get_threat_emoji(t)
 
-            lines.append(f"\n{icon} **{clean_expl}**{dist_str}{towards_tag}")
+            lines.append(f"\n• {t_icon} <b>{clean_expl}</b>{dist_str}{towards_tag}")
             if dir_str:
-                lines.append(dir_str)
+                lines.append(f"  {html.escape(dir_str)}")
 
+    # 3. Попередження щодо безпеки та ППО
     has_ballistics = any(
         (t.get("type") in ("ballistic", "mig31k", "kinzhal")) or
-        any(w in (t.get("explanation") or "").lower() for w in ["баліст", "кинжал", "кинджал"])
+        any(w in (t.get("explanation") or "").lower() for w in ["баліст", "кинжал", "кинджал", "саваслейка"])
         for t in threats
-    ) or any(w in reasons_str.lower() for w in ["баліст", "кинжал", "кинджал"])
+    ) or any(w in raw_reasons_str.lower() for w in ["баліст", "кинжал", "кинджал"])
 
     if state.get("is_dorozvidka"):
         lines.append("\n🔍 **Триває дорозвідка повітряного простору** *(якщо нових загроз не буде — очікується відбій)* 🙏")
     elif level == "red":
         if has_ballistics:
-            lines.append("\n💥 🛡️ **УВАГА: При загрозі балістики/гіперзвуку можлива активна робота ППО!** Перебувайте в укриттях через критично високу швидкість цілей та загрозу падіння уламків! 🙏")
+            lines.append(
+                f"\n{e('air_defense_patriot')} {e('burst')} <b>УВАГА: Загроза балістики/гіперзвуку! Можлива активна робота ППО!</b> "
+                "Перебувайте в укриттях через критично високу швидкість цілей та загрозу падіння уламків! 🙏"
+            )
         else:
-            lines.append("\n🛡️ 💥 **УВАГА: Можлива робота ППО!** Будь ласка, перебувайте в укриттях або дотримуйтесь правила двох стін через загрозу вибухової хвилі та падіння уламків! 🙏")
+            lines.append(
+                f"\n{e('air_defense_gepard')} <b>УВАГА: Можлива робота ППО!</b> "
+                "Будь ласка, перебувайте в укриттях або дотримуйтесь правила двох стін через загрозу вибухової хвилі та падіння уламків! 🙏"
+            )
     elif level == "yellow":
-        lines.append("\n⚠️ *Будь ласка, будьте уважні та стежте за оновленнями ситуації!*")
+        lines.append("\n⚠️ <i>Будь ласка, будьте уважні та стежте за оновленнями ситуації!</i>")
 
     now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
-    lines.append(f"\n⏱ **Оновлено:** {now_tz} | [NEPTUN Map](https://neptun.in.ua/)")
+    lines.append(f"\n⏱ <b>Оновлено:</b> {now_tz} | <a href=\"https://neptun.in.ua/\">NEPTUN Map</a>")
     return "\n".join(lines)
