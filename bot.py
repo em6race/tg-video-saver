@@ -33,6 +33,7 @@ from handlers.alerts import (
     alerts_on_command,
     alerts_off_command,
     map_command,
+    putin_command,
     location_handler,
     cancel_handler,
     handle_callback_query,
@@ -127,6 +128,7 @@ def main() -> None:
         application.add_handler(CommandHandler("alerts_on", alerts_on_command))
         application.add_handler(CommandHandler("alerts_off", alerts_off_command))
         application.add_handler(CommandHandler("map", map_command))
+        application.add_handler(CommandHandler(["putin", "dox", "dead"], putin_command))
         application.add_handler(MessageHandler(filters.LOCATION, location_handler))
         application.add_handler(MessageHandler(filters.Regex(r"^❌ Скасувати$"), cancel_handler))
 

@@ -22,6 +22,7 @@ from .commands import (
     map_command,
     handle_manual_alert_refresh,
     status_command,
+    putin_command,
 )
 from .callbacks import (
     handle_callback_query,
@@ -46,6 +47,7 @@ __all__ = [
     "map_command",
     "handle_manual_alert_refresh",
     "status_command",
+    "putin_command",
     "handle_callback_query",
     "handle_unknown",
 ]

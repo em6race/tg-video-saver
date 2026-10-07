@@ -287,6 +287,11 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     elif level == "yellow":
         lines.append("\n⚠️ <i>Будь ласка, будьте уважні та стежте за оновленнями ситуації!</i>")
 
+    putin_enabled = sub.get("putin_check_enabled", True) if sub else True
+    if putin_enabled:
+        kyiv_today = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%d.%m.%Y")
+        lines.append(f"\n☠️ <i>{kyiv_today}. Чи здох путін? — На жаль, ще ні.</i>")
+
     now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
     lines.append(f"\n⏱ <b>Оновлено:</b> {now_tz} | <a href=\"https://neptun.in.ua/\">NEPTUN Map</a>")
     return "\n".join(lines)

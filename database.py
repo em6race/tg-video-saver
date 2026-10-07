@@ -85,6 +85,14 @@ def init_db():
         except Exception:
             pass
         try:
+            cursor.execute("ALTER TABLE alert_subscriptions ADD COLUMN sound_enabled INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE alert_subscriptions ADD COLUMN putin_check_enabled INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        try:
             cursor.execute("PRAGMA journal_mode=WAL")
         except Exception:
             pass
@@ -553,7 +561,7 @@ async def get_user_subscription(user_id: int) -> dict:
         return await asyncio.to_thread(get_user_subscription_sync, user_id)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id, sound_enabled
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id, sound_enabled, putin_check_enabled
             FROM alert_subscriptions WHERE user_id=?
         ''', (int(user_id),)) as cursor:
             row = await cursor.fetchone()
@@ -570,14 +578,15 @@ async def get_user_subscription(user_id: int) -> dict:
                 "awaiting_location": bool(row[7]),
                 "enabled": bool(row[8]),
                 "last_alert_msg_id": row[9],
-                "sound_enabled": bool(row[10] if len(row) > 10 and row[10] is not None else 1)
+                "sound_enabled": bool(row[10] if len(row) > 10 and row[10] is not None else 1),
+                "putin_check_enabled": bool(row[11] if len(row) > 11 and row[11] is not None else 1)
             }
 
 def get_user_subscription_sync(user_id: int) -> dict:
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id, sound_enabled
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, awaiting_location, enabled, last_alert_msg_id, sound_enabled, putin_check_enabled
             FROM alert_subscriptions WHERE user_id=?
         ''', (int(user_id),))
         row = cursor.fetchone()
@@ -594,14 +603,15 @@ def get_user_subscription_sync(user_id: int) -> dict:
             "awaiting_location": bool(row[7]),
             "enabled": bool(row[8]),
             "last_alert_msg_id": row[9],
-            "sound_enabled": bool(row[10] if len(row) > 10 and row[10] is not None else 1)
+            "sound_enabled": bool(row[10] if len(row) > 10 and row[10] is not None else 1),
+            "putin_check_enabled": bool(row[11] if len(row) > 11 and row[11] is not None else 1)
         }
 
 def get_all_enabled_subscriptions_sync() -> list[dict]:
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id, sound_enabled
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id, sound_enabled, putin_check_enabled
             FROM alert_subscriptions WHERE enabled=1 AND oblast IS NOT NULL
         ''')
         rows = cursor.fetchall()
@@ -616,7 +626,8 @@ def get_all_enabled_subscriptions_sync() -> list[dict]:
                 "lat": r[5],
                 "lon": r[6],
                 "last_alert_msg_id": r[7],
-                "sound_enabled": bool(r[8] if len(r) > 8 and r[8] is not None else 1)
+                "sound_enabled": bool(r[8] if len(r) > 8 and r[8] is not None else 1),
+                "putin_check_enabled": bool(r[9] if len(r) > 9 and r[9] is not None else 1)
             })
         return result
 
@@ -625,7 +636,7 @@ async def get_all_enabled_subscriptions() -> list[dict]:
         return await asyncio.to_thread(get_all_enabled_subscriptions_sync)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute('''
-            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id, sound_enabled
+            SELECT user_id, chat_id, oblast, raion, locality, lat, lon, last_alert_msg_id, sound_enabled, putin_check_enabled
             FROM alert_subscriptions WHERE enabled=1 AND oblast IS NOT NULL
         ''') as cursor:
             rows = await cursor.fetchall()
@@ -640,7 +651,8 @@ async def get_all_enabled_subscriptions() -> list[dict]:
                     "lat": r[5],
                     "lon": r[6],
                     "last_alert_msg_id": r[7],
-                    "sound_enabled": bool(r[8] if len(r) > 8 and r[8] is not None else 1)
+                    "sound_enabled": bool(r[8] if len(r) > 8 and r[8] is not None else 1),
+                    "putin_check_enabled": bool(r[9] if len(r) > 9 and r[9] is not None else 1)
                 })
             return result
 
@@ -666,5 +678,28 @@ def toggle_user_sound_sync(user_id: int) -> bool:
         cursor.execute("UPDATE alert_subscriptions SET sound_enabled=? WHERE user_id=?", (new_sound, int(user_id)))
         conn.commit()
         return bool(new_sound)
+
+async def toggle_user_putin(user_id: int) -> bool:
+    if aiosqlite is None:
+        return await asyncio.to_thread(toggle_user_putin_sync, user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT putin_check_enabled FROM alert_subscriptions WHERE user_id=?", (int(user_id),)) as cursor:
+            row = await cursor.fetchone()
+            current_val = bool(row[0] if row and row[0] is not None else 1)
+        new_val = 0 if current_val else 1
+        await db.execute("UPDATE alert_subscriptions SET putin_check_enabled=? WHERE user_id=?", (new_val, int(user_id)))
+        await db.commit()
+        return bool(new_val)
+
+def toggle_user_putin_sync(user_id: int) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT putin_check_enabled FROM alert_subscriptions WHERE user_id=?", (int(user_id),))
+        row = cursor.fetchone()
+        current_val = bool(row[0] if row and row[0] is not None else 1)
+        new_val = 0 if current_val else 1
+        cursor.execute("UPDATE alert_subscriptions SET putin_check_enabled=? WHERE user_id=?", (new_val, int(user_id)))
+        conn.commit()
+        return bool(new_val)
 
 init_db()

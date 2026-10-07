@@ -19,6 +19,7 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
     _user_last_auto_edit_time,
+    _user_last_putin_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,11 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
             logger.debug(f"Could not delete old alert message {m_id} for user {user_id}: {del_err}")
 
     sound_enabled = sub.get("sound_enabled", True) if sub else True
+    putin_enabled = sub.get("putin_check_enabled", True) if sub else True
     msg_text = format_alert_message(sub, current_state, is_manual_check=is_manual_check, prev_level=prev_level)
-    alert_kb = get_alert_inline_keyboard(sound_enabled)
+    alert_kb = get_alert_inline_keyboard(sound_enabled, putin_enabled)
     is_silent = (current_state["level"] == "green") or (not sound_enabled)
+    _user_last_putin_date[user_id] = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%d.%m.%Y")
 
     try:
         sent_msg = await bot.send_message(
@@ -90,7 +93,30 @@ async def alerts_monitoring_loop(application) -> None:
                         prev_sig = _user_last_threat_signature.get(user_id)
                         last_auto_edit = _user_last_auto_edit_time.get(user_id, 0)
                         sound_enabled = sub.get("sound_enabled", True)
-                        alert_kb = get_alert_inline_keyboard(sound_enabled)
+                        putin_enabled = sub.get("putin_check_enabled", True)
+                        alert_kb = get_alert_inline_keyboard(sound_enabled, putin_enabled)
+
+                        # Щоденне оновлення рядка «Чи здох путін?» при зміні календарної дати
+                        today_kyiv = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%d.%m.%Y")
+                        last_putin_date = _user_last_putin_date.get(user_id)
+                        if last_putin_date is None:
+                            _user_last_putin_date[user_id] = today_kyiv
+                        elif last_putin_date != today_kyiv:
+                            _user_last_putin_date[user_id] = today_kyiv
+                            if putin_enabled and last_msg_id:
+                                msg_text = format_alert_message(sub, current_state, is_manual_check=(curr_level == "green"), prev_level=prev_level)
+                                try:
+                                    await application.bot.edit_message_text(
+                                        chat_id=chat_id,
+                                        message_id=last_msg_id,
+                                        text=msg_text,
+                                        reply_markup=alert_kb,
+                                        parse_mode="HTML",
+                                        disable_web_page_preview=True
+                                    )
+                                    continue
+                                except Exception as date_edit_err:
+                                    logger.debug(f"Daily putin date edit failed for {user_id}: {date_edit_err}")
 
                         if prev_level is None:
                             _user_last_alert_state[user_id] = curr_level

@@ -234,8 +234,9 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
         _user_last_threat_signature[user_id] = current_sig
 
         sound_enabled = sub.get("sound_enabled", True) if sub else True
+        putin_enabled = sub.get("putin_check_enabled", True) if sub else True
         msg_text = format_alert_message(sub, current_state, is_manual_check=True)
-        alert_kb = get_alert_inline_keyboard(sound_enabled)
+        alert_kb = get_alert_inline_keyboard(sound_enabled, putin_enabled)
 
         is_same_as_last = (current_msg_id == last_stored_msg_id)
         edited_inplace = False
@@ -328,3 +329,34 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error(f"Error in status_command: {e}")
         await status_msg.edit_text(f"❌ Не вдалося отримати статус: `{e}`", parse_mode="Markdown")
+
+async def putin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обробник команди /putin — показує актуальний статус чи здох путін."""
+    if not await check_access(update, context):
+        return
+    await delete_user_command_message(update)
+    user_id = update.effective_user.id
+    sub = await get_user_subscription(user_id)
+    putin_enabled = sub.get("putin_check_enabled", True) if sub else True
+
+    tz = pytz.timezone("Europe/Kiev")
+    kyiv_today = datetime.now(tz).strftime("%d.%m.%Y")
+    status_text = (
+        f"☠️ <b>{kyiv_today}. Чи здох путін?</b>\n"
+        "<b>На жаль, ще ні.</b> ⏳\n\n"
+        "• ЗСУ та сили оборони працюють над цим 24/7 🇺🇦\n"
+        "• Бавовна неминуча 🔥\n\n"
+        "💡 <i>Цей статус також оновлюється щодня прямо у вашій картці тривог (/status). "
+        "Його можна увімкнути або вимкнути кнопкою «☠️ Путін» під карткою.</i>"
+    )
+    toggle_btn = (
+        InlineKeyboardButton("☠️ Путін у картці: ВИМК", callback_data="toggle_putin")
+        if putin_enabled
+        else InlineKeyboardButton("☠️ Путін у картці: УВІМК", callback_data="toggle_putin")
+    )
+    kb = InlineKeyboardMarkup([[toggle_btn]])
+    await update.effective_message.reply_text(
+        status_text,
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
