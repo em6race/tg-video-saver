@@ -265,6 +265,11 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
             lines.append(f"\n• {t_icon} {badge}<b>{clean_expl}</b>{dist_str}{towards_tag}")
             if dir_str:
                 lines.append(f"  {html.escape(dir_str)}")
+    elif level in ("red", "yellow"):
+        if sub and sub.get("lat") is not None and sub.get("lon") is not None:
+            lines.append(f"\n{e('radar')} <b>Радар:</b> <i>Прямих цілей у вашому радіусі (~80 км) наразі не виявлено (триває дорозвідка або загроза на підльоті).</i>")
+        else:
+            lines.append(f"\n{e('radar')} <b>Радар:</b> <i>Прямих цілей у вашій області наразі не виявлено (триває дорозвідка або загроза на підльоті).</i>")
 
     # 3. Попередження щодо безпеки та ППО
     has_ballistics = any(
