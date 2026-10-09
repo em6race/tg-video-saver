@@ -46,11 +46,11 @@ from handlers.alerts import (
 # Load environment variables
 load_dotenv()
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 
 if not TOKEN:
-    raise ValueError("No BOT_TOKEN provided. Please set it in .env file.")
+    raise ValueError("No BOT_TOKEN or TELEGRAM_BOT_TOKEN provided. Please set it in .env file or environment variables.")
 
 # Enable logging
 logging.basicConfig(
