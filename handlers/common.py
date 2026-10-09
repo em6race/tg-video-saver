@@ -22,6 +22,10 @@ def is_alerts_plugin_enabled() -> bool:
     """Перевіряє, чи увімкнено плагін моніторингу повітряних тривог у .env."""
     return os.getenv("ENABLE_ALERTS_PLUGIN", "true").strip().lower() in ("1", "true", "yes", "on")
 
+def is_outages_plugin_enabled() -> bool:
+    """Перевіряє, чи увімкнено плагін графіків відключень світла у .env."""
+    return os.getenv("ENABLE_OUTAGES_PLUGIN", "false").strip().lower() in ("1", "true", "yes", "on")
+
 
 async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Перевіряє, чи має користувач доступ до бота (приватний режим)."""
@@ -91,6 +95,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "• `/alerts_on` / `/alerts_off` — увімкнути або вимкнути сповіщення.\n\n"
         )
 
+    outages_section = ""
+    if is_outages_plugin_enabled():
+        outages_section = (
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "⚡ **Графік відключень світла (Yasno / ДТЕК)**\n"
+            "• `/power` (або `/svitlo`) — головний екран: статус світла зараз, зворотний таймер та візуальна шкала 24h.\n"
+            "• `/group [номер]` — швидко встановити або переглянути вашу чергу (наприклад `/group 2.1` або `/group 3`).\n"
+            "• `/address [вулиця]` — пошук черги за вашою адресою.\n"
+            "• `/power_on` / `/power_off` — увімкнути або вимкнути попередження перед вимкненням світла.\n\n"
+        )
+
     admin_section = (
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🎟 **Адміністрування та доступ**\n"
@@ -105,6 +120,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📖 **Повна інструкція з користування ботом**\n\n"
         f"{media_section}"
         f"{alerts_section}"
+        f"{outages_section}"
         f"{admin_section}"
     )
     await update.effective_message.reply_text(help_text, reply_markup=get_main_reply_keyboard(), parse_mode="Markdown")

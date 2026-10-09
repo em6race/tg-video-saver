@@ -107,6 +107,24 @@ def init_db():
             )
         ''')
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_messages_user ON alert_messages(user_id)")
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS outage_subscriptions (
+                user_id INTEGER PRIMARY KEY,
+                chat_id INTEGER,
+                region_id INTEGER DEFAULT 25,
+                region_name TEXT DEFAULT 'Київ',
+                dso_id INTEGER DEFAULT 902,
+                dso_name TEXT DEFAULT 'ДТЕК Київські електромережі',
+                group_name TEXT,
+                address TEXT,
+                notifications_enabled INTEGER DEFAULT 1,
+                last_msg_id INTEGER,
+                last_schedule_hash TEXT,
+                awaiting_input TEXT,
+                updated_at TEXT
+            )
+        ''')
         conn.commit()
 
 # --- АСИНХРОННИЙ КЕШ ФАЙЛІВ (ДЛЯ ПЛАГІНА МЕДІА) ---
@@ -701,5 +719,245 @@ def toggle_user_putin_sync(user_id: int) -> bool:
         cursor.execute("UPDATE alert_subscriptions SET putin_check_enabled=? WHERE user_id=?", (new_val, int(user_id)))
         conn.commit()
         return bool(new_val)
+
+# --- ПЛАГІН ГРАФІКІВ ВІДКЛЮЧЕНЬ СВІТЛА (YASNO / DTEK) ---
+
+def get_outage_subscription_sync(user_id: int) -> dict:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
+                   group_name, address, notifications_enabled, last_msg_id,
+                   last_schedule_hash, awaiting_input, updated_at
+            FROM outage_subscriptions WHERE user_id=?
+        ''', (int(user_id),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "user_id": row[0],
+            "chat_id": row[1],
+            "region_id": row[2],
+            "region_name": row[3],
+            "dso_id": row[4],
+            "dso_name": row[5],
+            "group_name": row[6],
+            "address": row[7],
+            "notifications_enabled": bool(row[8]),
+            "last_msg_id": row[9],
+            "last_schedule_hash": row[10],
+            "awaiting_input": row[11],
+            "updated_at": row[12]
+        }
+
+async def get_outage_subscription(user_id: int) -> dict:
+    if aiosqlite is None:
+        return await asyncio.to_thread(get_outage_subscription_sync, user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('''
+            SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
+                   group_name, address, notifications_enabled, last_msg_id,
+                   last_schedule_hash, awaiting_input, updated_at
+            FROM outage_subscriptions WHERE user_id=?
+        ''', (int(user_id),)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "user_id": row[0],
+                "chat_id": row[1],
+                "region_id": row[2],
+                "region_name": row[3],
+                "dso_id": row[4],
+                "dso_name": row[5],
+                "group_name": row[6],
+                "address": row[7],
+                "notifications_enabled": bool(row[8]),
+                "last_msg_id": row[9],
+                "last_schedule_hash": row[10],
+                "awaiting_input": row[11],
+                "updated_at": row[12]
+            }
+
+def save_outage_group_sync(
+    user_id: int,
+    chat_id: int,
+    region_id: int,
+    region_name: str,
+    dso_id: int,
+    dso_name: str,
+    group_name: str,
+    address: str = None
+):
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO outage_subscriptions (
+                user_id, chat_id, region_id, region_name, dso_id, dso_name,
+                group_name, address, awaiting_input, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                chat_id=excluded.chat_id,
+                region_id=excluded.region_id,
+                region_name=excluded.region_name,
+                dso_id=excluded.dso_id,
+                dso_name=excluded.dso_name,
+                group_name=excluded.group_name,
+                address=coalesce(excluded.address, outage_subscriptions.address),
+                awaiting_input=NULL,
+                updated_at=excluded.updated_at
+        ''', (
+            int(user_id), int(chat_id), int(region_id), str(region_name),
+            int(dso_id), str(dso_name), str(group_name), address, now
+        ))
+        conn.commit()
+
+async def save_outage_group(
+    user_id: int,
+    chat_id: int,
+    region_id: int,
+    region_name: str,
+    dso_id: int,
+    dso_name: str,
+    group_name: str,
+    address: str = None
+):
+    if aiosqlite is None:
+        return await asyncio.to_thread(
+            save_outage_group_sync, user_id, chat_id, region_id, region_name, dso_id, dso_name, group_name, address
+        )
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO outage_subscriptions (
+                user_id, chat_id, region_id, region_name, dso_id, dso_name,
+                group_name, address, awaiting_input, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                chat_id=excluded.chat_id,
+                region_id=excluded.region_id,
+                region_name=excluded.region_name,
+                dso_id=excluded.dso_id,
+                dso_name=excluded.dso_name,
+                group_name=excluded.group_name,
+                address=coalesce(excluded.address, outage_subscriptions.address),
+                awaiting_input=NULL,
+                updated_at=excluded.updated_at
+        ''', (
+            int(user_id), int(chat_id), int(region_id), str(region_name),
+            int(dso_id), str(dso_name), str(group_name), address, now
+        ))
+        await db.commit()
+
+async def set_outage_awaiting(user_id: int, chat_id: int, awaiting_input: str = None):
+    now = datetime.utcnow().isoformat()
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO outage_subscriptions (user_id, chat_id, awaiting_input, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        chat_id=excluded.chat_id,
+                        awaiting_input=excluded.awaiting_input,
+                        updated_at=excluded.updated_at
+                ''', (int(user_id), int(chat_id), awaiting_input, now))
+                conn.commit()
+        return await asyncio.to_thread(_sync)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO outage_subscriptions (user_id, chat_id, awaiting_input, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                chat_id=excluded.chat_id,
+                awaiting_input=excluded.awaiting_input,
+                updated_at=excluded.updated_at
+        ''', (int(user_id), int(chat_id), awaiting_input, now))
+        await db.commit()
+
+async def toggle_outage_notifications(user_id: int) -> bool:
+    sub = await get_outage_subscription(user_id)
+    curr = sub.get("notifications_enabled", True) if sub else True
+    new_val = 0 if curr else 1
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE outage_subscriptions SET notifications_enabled=? WHERE user_id=?", (new_val, int(user_id)))
+                conn.commit()
+        await asyncio.to_thread(_sync)
+        return bool(new_val)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE outage_subscriptions SET notifications_enabled=? WHERE user_id=?", (new_val, int(user_id)))
+        await db.commit()
+    return bool(new_val)
+
+async def set_outage_last_msg_id(user_id: int, msg_id: int):
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE outage_subscriptions SET last_msg_id=? WHERE user_id=?", (int(msg_id) if msg_id else None, int(user_id)))
+                conn.commit()
+        return await asyncio.to_thread(_sync)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE outage_subscriptions SET last_msg_id=? WHERE user_id=?", (int(msg_id) if msg_id else None, int(user_id)))
+        await db.commit()
+
+async def update_outage_schedule_hash(user_id: int, schedule_hash: str):
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE outage_subscriptions SET last_schedule_hash=? WHERE user_id=?", (schedule_hash, int(user_id)))
+                conn.commit()
+        return await asyncio.to_thread(_sync)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE outage_subscriptions SET last_schedule_hash=? WHERE user_id=?", (schedule_hash, int(user_id)))
+        await db.commit()
+
+async def get_all_enabled_outage_subscriptions() -> list[dict]:
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
+                           group_name, address, notifications_enabled, last_msg_id,
+                           last_schedule_hash
+                    FROM outage_subscriptions
+                    WHERE notifications_enabled=1 AND group_name IS NOT NULL
+                ''')
+                rows = cursor.fetchall()
+                res = []
+                for r in rows:
+                    res.append({
+                        "user_id": r[0], "chat_id": r[1], "region_id": r[2], "region_name": r[3],
+                        "dso_id": r[4], "dso_name": r[5], "group_name": r[6], "address": r[7],
+                        "notifications_enabled": bool(r[8]), "last_msg_id": r[9], "last_schedule_hash": r[10]
+                    })
+                return res
+        return await asyncio.to_thread(_sync)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('''
+            SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
+                   group_name, address, notifications_enabled, last_msg_id,
+                   last_schedule_hash
+            FROM outage_subscriptions
+            WHERE notifications_enabled=1 AND group_name IS NOT NULL
+        ''') as cursor:
+            rows = await cursor.fetchall()
+            res = []
+            for r in rows:
+                res.append({
+                    "user_id": r[0], "chat_id": r[1], "region_id": r[2], "region_name": r[3],
+                    "dso_id": r[4], "dso_name": r[5], "group_name": r[6], "address": r[7],
+                    "notifications_enabled": bool(r[8]), "last_msg_id": r[9], "last_schedule_hash": r[10]
+                })
+            return res
 
 init_db()

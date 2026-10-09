@@ -32,7 +32,14 @@ from keyboards import (
     get_main_reply_keyboard,
     ALERT_REFRESH_COOLDOWN,
 )
-from handlers.common import check_access, help_command, is_media_plugin_enabled, ADMIN_ID
+from handlers.common import (
+    check_access,
+    help_command,
+    is_media_plugin_enabled,
+    is_alerts_plugin_enabled,
+    is_outages_plugin_enabled,
+    ADMIN_ID,
+)
 from handlers.admin import (
     get_invite_builder_keyboard,
     send_created_invite_message,
@@ -65,6 +72,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     choice = query.data or ""
+
+    # --- ОБРОБКА ПЛАГІНА ВІДКЛЮЧЕНЬ СВІТЛА (YASNO / ДТЕК) ---
+    if is_outages_plugin_enabled():
+        from handlers.outages.callbacks import handle_outages_callback_query
+        if await handle_outages_callback_query(update, context):
+            return
 
     # --- ОБРОБКА КОНСТРУКТОРА ТА СПИСКУ ІНВАЙТІВ (ДЛЯ АДМІНА) ---
     if choice.startswith("inv_"):
@@ -556,48 +569,149 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         return
 
-    if text in ("📊 Статус тривоги", "Статус тривоги", "/status", "/check"):
-        await status_command(update, context)
-        return
-    elif text in ("🗺️ Карта тривог", "Карта тривог", "/map"):
-        await map_command(update, context)
-        return
-    elif text in ("🚨 Налаштувати тривоги", "Налаштувати тривоги", "/alerts"):
-        await alerts_command(update, context)
-        return
-    elif text in ("❓ Довідка", "❓ Довідка та допомога", "Довідка", "/help"):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # 1. Загальні команди та кнопки меню
+    if text in ("❓ Довідка", "❓ Довідка та допомога", "Довідка", "/help"):
         await help_command(update, context)
         return
 
-    user_id = update.effective_user.id
-    sub = await get_user_subscription(user_id)
+    # 2. Обробка кнопок плагіна відключень світла
+    if is_outages_plugin_enabled():
+        from handlers.outages.commands import power_command, prompt_group_setup, group_command
+        from database import get_outage_subscription, save_outage_group, set_outage_awaiting
+        from yasno_outages import yasno_client
+        import re
 
-    # Шукаємо населений пункт, якщо увімкнено очікування локації АБО якщо користувач просто вписав назву міста
-    should_try_geocode = (sub and sub.get("awaiting_location")) or (
-        not is_media_plugin_enabled() and len(text) <= 60 and not text.startswith("http")
-    )
-
-    if should_try_geocode:
-        status_msg = await update.message.reply_text(f"🔍 Шукаю населений пункт «{text}»...")
-        geo = await forward_geocode(text)
-        if geo:
-            await status_msg.delete()
-            await prompt_location_confirmation(update, context, geo)
+        if text in ("💡 Стан світла", "⚡ Графік відключень", "Стан світла", "Графік відключень", "/power", "/svitlo"):
+            await power_command(update, context)
             return
-        else:
-            await status_msg.edit_text(
-                f"❌ Не вдалося знайти населений пункт «{text}» в Україні 🇺🇦\n\n"
-                "Спробуйте:\n"
-                "• Написати назву точніше (наприклад: *Бровари*, *м. Одеса*, *с. Софіївська Борщагівка*)\n"
-                "• Або натиснути кнопку **«📍 Надіслати мою геопозицію»** внизу екрана\n"
-                "• Або оберіть область вручну у /alerts",
-                parse_mode="Markdown"
-            )
+        elif text in ("⚙️ Налаштувати групу/адресу", "Налаштувати групу/адресу", "Налаштувати групу", "/group"):
+            await prompt_group_setup(update, context)
             return
 
-    hint = (
-        "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram, Spotify) або скористайтеся меню кнопок нижче 🚨"
-        if is_media_plugin_enabled()
-        else "Напишіть назву вашого міста для налаштування тривог або скористайтеся кнопками меню внизу екрана 🚨"
-    )
+        outage_sub = await get_outage_subscription(user_id)
+        awaiting = outage_sub.get("awaiting_input") if outage_sub else None
+
+        # Якщо користувач прямо ввів номер групи (наприклад: 1, 2, 2.1, 3.2 тощо)
+        if re.fullmatch(r"^[1-6](\.[1-2])?$", text):
+            grp = text if "." in text else f"{text}.1"
+            reg_id = outage_sub.get("region_id", 25) if outage_sub else 25
+            reg_name = outage_sub.get("region_name", "Київ") if outage_sub else "Київ"
+            dso_id = outage_sub.get("dso_id", 902) if outage_sub else 902
+            dso_name = outage_sub.get("dso_name", "ДТЕК Київські електромережі") if outage_sub else "ДТЕК Київські електромережі"
+            await save_outage_group(user_id, chat_id, reg_id, reg_name, dso_id, dso_name, grp)
+            await update.message.reply_text(f"✅ Встановлено чергу (групу): **{grp}** ({reg_name})!", parse_mode="Markdown")
+            await power_command(update, context)
+            return
+
+        # Якщо бот очікує назву вулиці
+        if awaiting == "search_street" or (not is_alerts_plugin_enabled() and not is_media_plugin_enabled() and len(text) <= 60 and not text.startswith("http")):
+            reg_id = outage_sub.get("region_id", 25) if outage_sub else 25
+            dso_id = outage_sub.get("dso_id", 902) if outage_sub else 902
+            status_msg = await update.message.reply_text(f"🔍 Шукаю вулицю «{text}»...")
+            try:
+                streets = await yasno_client.search_streets(reg_id, dso_id, text)
+                if streets:
+                    buttons = []
+                    for s in streets[:6]:
+                        buttons.append([InlineKeyboardButton(s["value"], callback_data=f"power_sel_st:{s['id']}")])
+                    buttons.append([InlineKeyboardButton("❌ Скасувати", callback_data="close_power_card")])
+                    await status_msg.edit_text(
+                        f"📍 Оберіть вашу вулицю серед знайдених за запитом «{text}»:",
+                        reply_markup=InlineKeyboardMarkup(buttons)
+                    )
+                    return
+                else:
+                    await status_msg.edit_text(
+                        f"❌ Вулицю «{text}» не знайдено.\n"
+                        "Спробуйте ввести лише назву без слова «вулиця» (наприклад: `Хрещатик`, `Шевченка`, `Перемоги`):"
+                    )
+                    return
+            except Exception as search_err:
+                logger.error(f"Error searching streets: {search_err}")
+                await status_msg.edit_text(f"❌ Помилка пошуку вулиці: {search_err}")
+                return
+
+        # Якщо бот очікує номер будинку
+        elif awaiting == "search_house":
+            street_id = context.user_data.get("outage_street_id")
+            if street_id:
+                reg_id = outage_sub.get("region_id", 25) if outage_sub else 25
+                dso_id = outage_sub.get("dso_id", 902) if outage_sub else 902
+                status_msg = await update.message.reply_text(f"🔍 Шукаю будинок «{text}»...")
+                try:
+                    houses = await yasno_client.search_houses(reg_id, dso_id, street_id, text)
+                    if houses:
+                        target_house = next((h for h in houses if h.get("value", "").strip().lower() == text.lower()), houses[0])
+                        house_id = target_house["id"]
+                        group_res = await yasno_client.get_group_by_address(reg_id, dso_id, street_id, house_id)
+                        if group_res and group_res.get("group"):
+                            grp = group_res["group"]
+                            full_addr = f"{target_house.get('value')}"
+                            reg_name = outage_sub.get("region_name", "Київ") if outage_sub else "Київ"
+                            dso_name = outage_sub.get("dso_name", "ДТЕК") if outage_sub else "ДТЕК"
+                            await save_outage_group(user_id, chat_id, reg_id, reg_name, dso_id, dso_name, grp, address=full_addr)
+                            await status_msg.edit_text(f"🎉 Знайдено групу для будинку: **{grp}**!")
+                            await power_command(update, context)
+                            return
+                        else:
+                            await status_msg.edit_text("❌ Не вдалося визначити групу для цієї адреси у системі Yasno.")
+                            return
+                    else:
+                        await status_msg.edit_text(f"❌ Будинок «{text}» не знайдено на цій вулиці. Перевірте номер або виберіть групу вручну.")
+                        return
+                except Exception as house_err:
+                    logger.error(f"Error searching houses: {house_err}")
+                    await status_msg.edit_text(f"❌ Помилка пошуку будинку: {house_err}")
+                    return
+
+    # 3. Обробка кнопок плагіна тривог
+    if is_alerts_plugin_enabled():
+        if text in ("📊 Статус тривоги", "Статус тривоги", "/status", "/check"):
+            await status_command(update, context)
+            return
+        elif text in ("🗺️ Карта тривог", "Карта тривог", "/map"):
+            await map_command(update, context)
+            return
+        elif text in ("🚨 Налаштувати тривоги", "Налаштувати тривоги", "/alerts"):
+            await alerts_command(update, context)
+            return
+
+        sub = await get_user_subscription(user_id)
+        should_try_geocode = (sub and sub.get("awaiting_location")) or (
+            not is_media_plugin_enabled() and not is_outages_plugin_enabled() and len(text) <= 60 and not text.startswith("http")
+        )
+
+        if should_try_geocode:
+            status_msg = await update.message.reply_text(f"🔍 Шукаю населений пункт «{text}»...")
+            geo = await forward_geocode(text)
+            if geo:
+                await status_msg.delete()
+                await prompt_location_confirmation(update, context, geo)
+                return
+            else:
+                await status_msg.edit_text(
+                    f"❌ Не вдалося знайти населений пункт «{text}» в Україні 🇺🇦\n\n"
+                    "Спробуйте:\n"
+                    "• Написати назву точніше (наприклад: *Бровари*, *м. Одеса*, *с. Софіївська Борщагівка*)\n"
+                    "• Або натиснути кнопку **«📍 Надіслати мою геопозицію»** внизу екрана\n"
+                    "• Або оберіть область вручну у /alerts",
+                    parse_mode="Markdown"
+                )
+                return
+
+    # 4. Підказка за замовчуванням
+    if is_outages_plugin_enabled() and not is_alerts_plugin_enabled():
+        hint = "⚡ Натисніть **«💡 Стан світла»** або оберіть дію з кнопок меню внизу чату:"
+    elif is_alerts_plugin_enabled() and not is_outages_plugin_enabled():
+        hint = (
+            "Будь ласка, надішліть посилання на медіа (TikTok, YouTube, Instagram, Spotify) або скористайтеся меню кнопок нижче 🚨"
+            if is_media_plugin_enabled()
+            else "Напишіть назву вашого міста для налаштування тривог або скористайтеся кнопками меню внизу екрана 🚨"
+        )
+    else:
+        hint = "Скористайтеся кнопками меню внизу екрана або введіть /help 💡"
+
     await update.message.reply_text(hint, reply_markup=get_main_reply_keyboard())

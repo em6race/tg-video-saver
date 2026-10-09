@@ -21,7 +21,12 @@ from database import (
     clear_unused_invites,
     get_allowed_users_list,
 )
-from handlers.common import delete_user_command_message, is_media_plugin_enabled, is_alerts_plugin_enabled
+from handlers.common import (
+    delete_user_command_message,
+    is_media_plugin_enabled,
+    is_alerts_plugin_enabled,
+    is_outages_plugin_enabled,
+)
 from keyboards import get_main_reply_keyboard
 
 load_dotenv()
@@ -216,11 +221,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "🗺️ **Карта тривог:** переглядайте актуальну HD-карту тривог та цілей у небі.\n"
                 if is_alerts_plugin_enabled() else ""
             )
+            outages_line = (
+                "⚡ **Графік відключень світла:** переглядайте стан світла онлайн, свій розклад та отримуйте сповіщення перед вимкненнями.\n"
+                if is_outages_plugin_enabled() else ""
+            )
             await update.message.reply_text(
                 "🎉 **Ласкаво просимо! Доступ активовано!**\n\n"
                 "Ваше запрошення успішно активовано. Тепер ви маєте доступ до бота:\n\n"
                 f"{media_line}"
-                f"{alerts_line}\n"
+                f"{alerts_line}"
+                f"{outages_line}\n"
                 "👇 **З чого почати? Оберіть дію нижче:**",
                 reply_markup=welcome_keyboard,
                 parse_mode="Markdown"
@@ -258,6 +268,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             features_desc.append("завантаження музики та відео (TikTok, YouTube, Spotify)")
         if is_alerts_plugin_enabled():
             features_desc.append("оперативного моніторингу повітряних тривог 🚨")
+        if is_outages_plugin_enabled():
+            features_desc.append("графіків відключень світла (Yasno / ДТЕК) ⚡")
 
         desc_str = " та ".join(features_desc) if features_desc else "ваших щоденних завдань"
 
@@ -267,6 +279,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if is_alerts_plugin_enabled():
             quick_start_lines.append("• Натисніть **«🚨 Налаштувати тривоги»** або надішліть свою геопозицію 📍")
             quick_start_lines.append("• Скористайтесь кнопками меню внизу екрана для перевірки статусу тривог та карти.")
+        if is_outages_plugin_enabled():
+            quick_start_lines.append("• Натисніть **«💡 Стан світла»** або команду `/power`, щоб переглянути статус та таймер")
+            quick_start_lines.append("• Натисніть **«⚙️ Налаштувати групу/адресу»**, щоб обрати вашу чергу вимкнень (1-6 або адреса)")
         if not quick_start_lines:
             quick_start_lines.append("• Скористайтесь командою /help для перегляду можливостей бота.")
 
