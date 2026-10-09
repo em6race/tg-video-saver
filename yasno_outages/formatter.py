@@ -66,7 +66,7 @@ def get_current_state_and_countdown(day_schedule: DaySchedule, current_time: dat
         return ("ON", "🟢 Відключень не заплановано. Світло є постійно.", None)
 
     if not day_schedule.is_schedule_available:
-        return ("UNKNOWN", "⏳ Очікується публікація графіка від Укренерго.", None)
+        return ("UNKNOWN", "⏳ Статус: **Невідомо** (очікується публікація графіка від Укренерго).", None)
 
     current_minute = current_time.hour * 60 + current_time.minute
 
@@ -172,6 +172,8 @@ def format_outage_card(
     target_schedule = group_schedule.today if is_viewing_today else group_schedule.tomorrow
     target_date = today_date if is_viewing_today else tomorrow_date
 
+    has_info = target_schedule.is_schedule_available or target_schedule.is_no_outages or target_schedule.is_emergency
+
     # Determine state and countdown (only relevant for today)
     if is_viewing_today:
         state_key, countdown_text, _ = get_current_state_and_countdown(target_schedule, now)
@@ -183,12 +185,14 @@ def format_outage_card(
         elif target_schedule.is_schedule_available:
             countdown_text = "📋 Графік на завтра затверджено."
         else:
-            countdown_text = "⏳ Графік на завтра ще формується."
+            countdown_text = "⏳ Статус: **Невідомо** (графік на завтра ще формується)"
 
     # Header styling
     if is_viewing_today:
         if target_schedule.is_emergency:
             header = "🚨 **АВАРІЙНІ ВІДКЛЮЧЕННЯ СВІТЛА** 🚨"
+        elif not has_info:
+            header = "⏳ **СТАТУС: НЕВІДОМО (ОЧІКУЄТЬСЯ ГРАФІК)**"
         elif state_key == "OFF":
             header = "🔌 **ВІДКЛЮЧЕННЯ СВІТЛА ЗА ГРАФІКОМ**"
         elif state_key == "PROBABLE":
@@ -196,7 +200,10 @@ def format_outage_card(
         else:
             header = "⚡ **СВІТЛО Є — ГРАФІК У НОРМІ**"
     else:
-        header = f"📅 **ГРАФІК НА ЗАВТРА ({format_date_ua(target_date)})**"
+        if not has_info:
+            header = f"📅 **ГРАФІК НА ЗАВТРА ({format_date_ua(target_date)}) — НЕВІДОМО**"
+        else:
+            header = f"📅 **ГРАФІК НА ЗАВТРА ({format_date_ua(target_date)})**"
 
     # Address / Group line
     loc_parts = [f"📍 **{region_name}** ({dso_name})", f"Група **{group_schedule.group}**"]
@@ -227,21 +234,24 @@ def format_outage_card(
     elif target_schedule.is_emergency:
         slots_text = "• 🚨 Діють графіки аварійних відключень (ГАВ). Погодинні інтервали не діють."
     else:
-        slots_text = "• ⏳ Графік ще не опубліковано. Зазвичай з'являється після 18:00–20:00 напередодні."
+        slots_text = "• ⏳ Статус: **Невідомо** (графік ще не оприлюднено Укренерго)"
 
     # Totals summary
-    outage_hours = round(target_schedule.total_outage_minutes / 60, 1)
-    probable_hours = round(target_schedule.total_probable_minutes / 60, 1)
+    if not has_info:
+        totals_line = "\n📊 Статус: **Невідомо** (дані відсутні)"
+    else:
+        outage_hours = round(target_schedule.total_outage_minutes / 60, 1)
+        probable_hours = round(target_schedule.total_probable_minutes / 60, 1)
 
-    totals_parts = []
-    if outage_hours > 0:
-        totals_parts.append(f"🔴 Без світла: ~**{outage_hours} год**")
-    if probable_hours > 0:
-        totals_parts.append(f"🟡 Сіра зона: ~**{probable_hours} год**")
-    if not totals_parts and target_schedule.is_schedule_available:
-        totals_parts.append("🟢 Без відключень (0 год)")
+        totals_parts = []
+        if outage_hours > 0:
+            totals_parts.append(f"🔴 Без світла: ~**{outage_hours} год**")
+        if probable_hours > 0:
+            totals_parts.append(f"🟡 Сіра зона: ~**{probable_hours} год**")
+        if not totals_parts and target_schedule.is_schedule_available:
+            totals_parts.append("🟢 Без відключень (0 год)")
 
-    totals_line = f"\n📊 {' • '.join(totals_parts)}" if totals_parts else ""
+        totals_line = f"\n📊 {' • '.join(totals_parts)}" if totals_parts else ""
 
     day_label = "сьогодні" if is_viewing_today else "завтра"
     date_display = format_date_ua(target_date)
@@ -260,7 +270,7 @@ def format_outage_card(
         f"{slots_text}"
         f"{totals_line}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 *Легенда: 🟢 світло є | 🔴 відключення | 🟡 можливе*\n"
+        f"💡 *Легенда: 🟢 світло є | 🔴 відключення | 🟡 можливе | ⚪ невідомо*\n"
         f"🔄 Оновлено: `{updated_time_str}` • Сповіщення: {notif_icon}"
     )
     return msg
@@ -291,9 +301,12 @@ def format_outage_caption(
     target_schedule = group_schedule.today if is_viewing_today else group_schedule.tomorrow
     target_date = today_date if is_viewing_today else tomorrow_date
 
+    has_info = target_schedule.is_schedule_available or target_schedule.is_no_outages or target_schedule.is_emergency
+
     day_word = "сьогодні" if is_viewing_today else "завтра"
     date_formatted = target_date.strftime("%d.%m.%Y")
-    header = f"⚡ **Розклад відключень на {day_word} {date_formatted}**"
+    status_suffix = " (Невідомо)" if not has_info else ""
+    header = f"⚡ **Розклад відключень на {day_word} {date_formatted}{status_suffix}**"
 
     lines = [header, ""]
 
@@ -311,7 +324,7 @@ def format_outage_caption(
     elif target_schedule.is_emergency:
         lines.append("• 🚨 Застосовано екстрені / аварійні відключення")
     else:
-        lines.append("• ⏳ Графік ще не опубліковано Укренерго")
+        lines.append("• ⏳ Статус: **Невідомо** (графік ще не оприлюднено Укренерго)")
 
     lines.append("")
     notif_str = "УВІМК" if notifications_enabled else "ВИМК"

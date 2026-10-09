@@ -135,18 +135,26 @@ def generate_outage_card_image(
     badge_cy = 48
     badge_h = 46
 
+    has_info = target_schedule.is_schedule_available or target_schedule.is_no_outages or target_schedule.is_emergency
+
     if not is_today:
         badge_w = 180
         badge_bg = (49, 46, 129)
         badge_text = "НА ЗАВТРА"
         bolt_col = (165, 180, 252)
-        sub_text = "Графік затверджено" if target_schedule.is_schedule_available else "Очікується графік від Укренерго"
+        sub_text = "Графік затверджено" if target_schedule.is_schedule_available else "Статус: Невідомо (очікується графік)"
     elif target_schedule.is_emergency:
         badge_w = 160
         badge_bg = (153, 27, 27)
         badge_text = "АВАРІЯ"
         bolt_col = (250, 204, 21)
         sub_text = "Діють екстрені аварійні відключення"
+    elif not has_info:
+        badge_w = 190
+        badge_bg = (51, 65, 85)
+        badge_text = "НЕВІДОМО"
+        bolt_col = (148, 163, 184)
+        sub_text = "Статус: Невідомо (очікується графік)"
     elif current_slot and current_slot.slot_type == "Definite":
         badge_w = 215
         badge_bg = (153, 27, 27)
@@ -247,8 +255,11 @@ def generate_outage_card_image(
         elif s_type == "NotPlanned":
             c = (34, 197, 94)   # Green
         else:
-            c = (71, 85, 105)   # Slate
+            c = (51, 65, 85)   # Slate
         draw.rectangle([sx, by, ex, by + bh], fill=c)
+
+    if not has_info:
+        draw.text((bx + bw // 2, by + bh // 2), "Статус: Невідомо • Очікується графік від Укренерго", font=font_stats, fill=(203, 213, 225), anchor="mm")
 
     # Timeline ticks & hour markers (00, 04, 08, 12, 16, 20, 24)
     tick_y = by + bh + 21
@@ -291,39 +302,58 @@ def generate_outage_card_image(
     pill_gap = 12
     p_w = (bw - pill_gap * 2) // 3  # ~242 px each
 
-    outage_mins = target_schedule.total_outage_minutes
-    prob_mins = target_schedule.total_probable_minutes
-    light_mins = max(0, 1440 - outage_mins - prob_mins)
+    if not has_info:
+        # Stat 1: Unknown light
+        p1_x = bx
+        draw.rounded_rectangle([p1_x, sy, p1_x + p_w, sy + sh], radius=9, fill=(36, 41, 64))
+        draw.ellipse([p1_x + 16, sy + 17, p1_x + 32, sy + 33], fill=(100, 116, 139))
+        draw.text((p1_x + 42, sy + 25), "Зі світлом: Невідомо", font=font_stats, fill=(203, 213, 225), anchor="lm")
 
-    light_h = round(light_mins / 60)
-    outage_h = round(outage_mins / 60)
+        # Stat 2: Unknown blackout
+        p2_x = p1_x + p_w + pill_gap
+        draw.rounded_rectangle([p2_x, sy, p2_x + p_w, sy + sh], radius=9, fill=(36, 41, 64))
+        draw.ellipse([p2_x + 16, sy + 17, p2_x + 32, sy + 33], fill=(100, 116, 139))
+        draw.text((p2_x + 42, sy + 25), "Без світла: Невідомо", font=font_stats, fill=(203, 213, 225), anchor="lm")
 
-    # Stat 1: Green light
-    p1_x = bx
-    draw.rounded_rectangle([p1_x, sy, p1_x + p_w, sy + sh], radius=9, fill=(36, 41, 64))
-    draw.ellipse([p1_x + 16, sy + 17, p1_x + 32, sy + 33], fill=(34, 197, 94))
-    draw.text((p1_x + 42, sy + 25), f"Зі світлом: ~{light_h} год", font=font_stats, fill=(74, 222, 128), anchor="lm")
-
-    # Stat 2: Red blackout
-    p2_x = p1_x + p_w + pill_gap
-    draw.rounded_rectangle([p2_x, sy, p2_x + p_w, sy + sh], radius=9, fill=(36, 41, 64))
-    draw.ellipse([p2_x + 16, sy + 17, p2_x + 32, sy + 33], fill=(239, 68, 68))
-    draw.text((p2_x + 42, sy + 25), f"Без світла: ~{outage_h} год", font=font_stats, fill=(248, 113, 113), anchor="lm")
-
-    # Stat 3: Next change / status
-    p3_x = p2_x + p_w + pill_gap
-    draw.rounded_rectangle([p3_x, sy, bar_right, sy + sh], radius=9, fill=(36, 41, 64))
-    draw_vector_clock(draw, p3_x + 24, sy + 25, r=9, color=(56, 189, 248))
-
-    if is_today and next_change_minute is not None:
-        ch_h, ch_m = next_change_minute // 60, next_change_minute % 60
-        ch_str = "24:00" if ch_h == 24 else f"{ch_h:02d}:{ch_m:02d}"
-        stat3_label = f"Зміна: о {ch_str}"
-    elif not is_today:
-        stat3_label = "Графік на добу"
+        # Stat 3: Unknown status
+        p3_x = p2_x + p_w + pill_gap
+        draw.rounded_rectangle([p3_x, sy, bar_right, sy + sh], radius=9, fill=(36, 41, 64))
+        draw_vector_clock(draw, p3_x + 24, sy + 25, r=9, color=(148, 163, 184))
+        draw.text((p3_x + 42, sy + 25), "Статус: Невідомо", font=font_stats, fill=(203, 213, 225), anchor="lm")
     else:
-        stat3_label = "Без змін"
-    draw.text((p3_x + 42, sy + 25), stat3_label, font=font_stats, fill=(56, 189, 248), anchor="lm")
+        outage_mins = target_schedule.total_outage_minutes
+        prob_mins = target_schedule.total_probable_minutes
+        light_mins = max(0, 1440 - outage_mins - prob_mins)
+
+        light_h = round(light_mins / 60)
+        outage_h = round(outage_mins / 60)
+
+        # Stat 1: Green light
+        p1_x = bx
+        draw.rounded_rectangle([p1_x, sy, p1_x + p_w, sy + sh], radius=9, fill=(36, 41, 64))
+        draw.ellipse([p1_x + 16, sy + 17, p1_x + 32, sy + 33], fill=(34, 197, 94))
+        draw.text((p1_x + 42, sy + 25), f"Зі світлом: ~{light_h} год", font=font_stats, fill=(74, 222, 128), anchor="lm")
+
+        # Stat 2: Red blackout
+        p2_x = p1_x + p_w + pill_gap
+        draw.rounded_rectangle([p2_x, sy, p2_x + p_w, sy + sh], radius=9, fill=(36, 41, 64))
+        draw.ellipse([p2_x + 16, sy + 17, p2_x + 32, sy + 33], fill=(239, 68, 68))
+        draw.text((p2_x + 42, sy + 25), f"Без світла: ~{outage_h} год", font=font_stats, fill=(248, 113, 113), anchor="lm")
+
+        # Stat 3: Next change / status
+        p3_x = p2_x + p_w + pill_gap
+        draw.rounded_rectangle([p3_x, sy, bar_right, sy + sh], radius=9, fill=(36, 41, 64))
+        draw_vector_clock(draw, p3_x + 24, sy + 25, r=9, color=(56, 189, 248))
+
+        if is_today and next_change_minute is not None:
+            ch_h, ch_m = next_change_minute // 60, next_change_minute % 60
+            ch_str = "24:00" if ch_h == 24 else f"{ch_h:02d}:{ch_m:02d}"
+            stat3_label = f"Зміна: о {ch_str}"
+        elif not is_today:
+            stat3_label = "Графік на добу"
+        else:
+            stat3_label = "Без змін"
+        draw.text((p3_x + 42, sy + 25), stat3_label, font=font_stats, fill=(56, 189, 248), anchor="lm")
 
     # Export to memory buffer
     buf = io.BytesIO()
