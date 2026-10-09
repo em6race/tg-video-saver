@@ -55,7 +55,7 @@ def _load_font(font_name: str, size: int) -> ImageFont.ImageFont:
             return None
 
 
-def draw_vector_bolt(draw: ImageDraw.ImageDraw, cx: float, cy: float, size: float = 18, color: Tuple[int, int, int] = (250, 204, 21)):
+def draw_vector_bolt(draw: ImageDraw.ImageDraw, cx: float, cy: float, size: float = 21, color: Tuple[int, int, int] = (250, 204, 21)):
     pts = [
         (cx + size * 0.15, cy - size * 0.5),
         (cx - size * 0.35, cy + size * 0.05),
@@ -67,20 +67,20 @@ def draw_vector_bolt(draw: ImageDraw.ImageDraw, cx: float, cy: float, size: floa
     draw.polygon(pts, fill=color)
 
 
-def draw_vector_pin(draw: ImageDraw.ImageDraw, cx: float, cy: float, size: float = 16, color: Tuple[int, int, int] = (244, 63, 94)):
+def draw_vector_pin(draw: ImageDraw.ImageDraw, cx: float, cy: float, size: float = 18, color: Tuple[int, int, int] = (244, 63, 94)):
     r = size / 2.0
     draw.ellipse([cx - r, cy - r - 2, cx + r, cy + r - 2], fill=color)
     draw.polygon([(cx - r + 1, cy - 2), (cx + r - 1, cy - 2), (cx, cy + r + 2)], fill=color)
     draw.ellipse([cx - 2, cy - 4, cx + 2, cy], fill=(255, 255, 255))
 
 
-def draw_vector_clock(draw: ImageDraw.ImageDraw, cx: float, cy: float, r: float = 8, color: Tuple[int, int, int] = (56, 189, 248)):
+def draw_vector_clock(draw: ImageDraw.ImageDraw, cx: float, cy: float, r: float = 9, color: Tuple[int, int, int] = (56, 189, 248)):
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=2)
     draw.line([cx, cy, cx, cy - r + 3], fill=color, width=2)
     draw.line([cx, cy, cx + r - 3, cy], fill=color, width=2)
 
 
-def draw_vector_calendar(draw: ImageDraw.ImageDraw, cx: float, cy: float, w: float = 15, h: float = 14, color: Tuple[int, int, int] = (168, 85, 247)):
+def draw_vector_calendar(draw: ImageDraw.ImageDraw, cx: float, cy: float, w: float = 16, h: float = 15, color: Tuple[int, int, int] = (168, 85, 247)):
     draw.rounded_rectangle([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], radius=3, outline=color, width=2)
     draw.rectangle([cx - w / 2 + 1, cy - h / 2, cx + w / 2 - 1, cy - h / 2 + 4], fill=color)
     draw.line([cx - 4, cy - h / 2 - 2, cx - 4, cy - h / 2], fill=(241, 245, 249), width=2)
@@ -95,8 +95,8 @@ def generate_outage_card_image(
     view_day: str = "today",
 ) -> io.BytesIO:
     """
-    Renders an 800x330 visual infographic card with edge-to-edge styling,
-    vector icons (no Unicode emoji boxes), and flush ticks.
+    Renders an 800x390 visual infographic card with compensated vertical volume,
+    edge-to-edge styling, vector icons, and flush ticks.
     """
     now = datetime.now(KYIV_TZ)
     is_today = (view_day == "today")
@@ -104,16 +104,16 @@ def generate_outage_card_image(
     target_date = now.date() if is_today else (now.date() + timedelta(days=1))
 
     # Font definitions
-    font_bold_title = _load_font("Roboto-Bold.ttf", 23)
-    font_bold_sub = _load_font("Roboto-Bold.ttf", 19)
-    font_reg_addr = _load_font("Roboto-Regular.ttf", 17)
+    font_bold_title = _load_font("Roboto-Bold.ttf", 24)
+    font_bold_sub = _load_font("Roboto-Bold.ttf", 20)
+    font_reg_addr = _load_font("Roboto-Regular.ttf", 18)
     font_date_pill = _load_font("Roboto-Bold.ttf", 16)
     font_time_tag = _load_font("Roboto-Bold.ttf", 16)
-    font_ticks = _load_font("Roboto-Regular.ttf", 16)
-    font_stats = _load_font("Roboto-Bold.ttf", 17)
+    font_ticks = _load_font("Roboto-Regular.ttf", 17)
+    font_stats = _load_font("Roboto-Bold.ttf", 18)
 
-    # Canvas setup: 800x330 seamless edge-to-edge background
-    W, H = 800, 330
+    # Canvas setup: 800x390 seamless edge-to-edge background with compensated volume
+    W, H = 800, 390
     CARD_BG = (24, 27, 44)
     img = Image.new("RGB", (W, H), color=CARD_BG)
     draw = ImageDraw.Draw(img)
@@ -132,23 +132,23 @@ def generate_outage_card_image(
                     next_slot = target_schedule.slots[i + 1]
                 break
 
-    badge_cy = 40
-    badge_h = 42
+    badge_cy = 48
+    badge_h = 46
 
     if not is_today:
-        badge_w = 175
+        badge_w = 180
         badge_bg = (49, 46, 129)
         badge_text = "НА ЗАВТРА"
         bolt_col = (165, 180, 252)
         sub_text = "Графік затверджено" if target_schedule.is_schedule_available else "Очікується графік від Укренерго"
     elif target_schedule.is_emergency:
-        badge_w = 155
+        badge_w = 160
         badge_bg = (153, 27, 27)
         badge_text = "АВАРІЯ"
         bolt_col = (250, 204, 21)
         sub_text = "Діють екстрені аварійні відключення"
     elif current_slot and current_slot.slot_type == "Definite":
-        badge_w = 205
+        badge_w = 215
         badge_bg = (153, 27, 27)
         badge_text = "СВІТЛА НЕМАЄ"
         bolt_col = (248, 113, 113)
@@ -160,7 +160,7 @@ def generate_outage_card_image(
         sub_text = f"До увімкнення: {dur_str} (о {end_time_str})"
         next_change_minute = current_slot.end
     elif current_slot and current_slot.slot_type == "Probable":
-        badge_w = 165
+        badge_w = 175
         badge_bg = (133, 77, 14)
         badge_text = "СІРА ЗОНА"
         bolt_col = (253, 224, 71)
@@ -169,7 +169,7 @@ def generate_outage_card_image(
         sub_text = f"Можливе вимкнення (до {end_time_str})"
         next_change_minute = current_slot.end
     else:
-        badge_w = 165
+        badge_w = 175
         badge_bg = (22, 101, 52)
         badge_text = "СВІТЛО Є"
         bolt_col = (250, 204, 21)
@@ -187,33 +187,33 @@ def generate_outage_card_image(
             sub_text = "Відключень більше не заплановано"
 
     # Draw header badge
-    draw.rounded_rectangle([24, badge_cy - badge_h // 2, 24 + badge_w, badge_cy + badge_h // 2], radius=8, fill=badge_bg)
-    draw_vector_bolt(draw, 45, badge_cy, size=19, color=bolt_col)
-    draw.text((63, badge_cy), badge_text, font=font_bold_title, fill=(255, 255, 255), anchor="lm")
+    draw.rounded_rectangle([24, badge_cy - badge_h // 2, 24 + badge_w, badge_cy + badge_h // 2], radius=9, fill=badge_bg)
+    draw_vector_bolt(draw, 47, badge_cy, size=21, color=bolt_col)
+    draw.text((66, badge_cy), badge_text, font=font_bold_title, fill=(255, 255, 255), anchor="lm")
     draw.text((24 + badge_w + 16, badge_cy), sub_text, font=font_bold_sub, fill=(241, 245, 249), anchor="lm")
 
     # 2. Row 2: Address on Left, Date Pill on Right
-    addr_cy = 84
+    addr_cy = 104
     date_str = f"{target_date.day} {MONTHS_UA[target_date.month]}"
     d_box = font_date_pill.getbbox(date_str)
     d_w = d_box[2] - d_box[0]
-    pill_w = d_w + 42
+    pill_w = d_w + 44
     pill_x2 = 776
     pill_x1 = pill_x2 - pill_w
 
-    # Date badge pill (Right)
-    draw.rounded_rectangle([pill_x1, addr_cy - 16, pill_x2, addr_cy + 16], radius=7, fill=(49, 46, 129), outline=(99, 102, 241), width=1)
-    draw_vector_calendar(draw, pill_x1 + 16, addr_cy, w=15, h=14, color=(165, 180, 252))
-    draw.text((pill_x1 + 32, addr_cy), date_str, font=font_date_pill, fill=(224, 231, 255), anchor="lm")
+    # Date badge pill (Right) - Pure date only!
+    draw.rounded_rectangle([pill_x1, addr_cy - 17, pill_x2, addr_cy + 17], radius=8, fill=(49, 46, 129), outline=(99, 102, 241), width=1)
+    draw_vector_calendar(draw, pill_x1 + 17, addr_cy, w=16, h=15, color=(165, 180, 252))
+    draw.text((pill_x1 + 34, addr_cy), date_str, font=font_date_pill, fill=(224, 231, 255), anchor="lm")
 
     # Address & Group (Left)
-    draw_vector_pin(draw, 34, addr_cy, size=16, color=(244, 63, 94))
+    draw_vector_pin(draw, 34, addr_cy, size=18, color=(244, 63, 94))
     addr_parts = [f"{region_name} ({dso_name})", f"Група {group_schedule.group}"]
     if address:
         addr_parts.append(address)
     full_addr = " • ".join(addr_parts)
 
-    # Truncate address if needed to not collide with date pill
+    # Truncate address if needed to avoid colliding with date pill
     max_addr_w = pill_x1 - 60
     while len(full_addr) > 10:
         box = font_reg_addr.getbbox(full_addr)
@@ -224,7 +224,7 @@ def generate_outage_card_image(
     draw.text((50, addr_cy), full_addr, font=font_reg_addr, fill=(148, 163, 184), anchor="lm")
 
     # 3. Timeline Bar
-    bx, by, bw, bh = 24, 150, 752, 52
+    bx, by, bw, bh = 24, 180, 752, 60
     bar_right = bx + bw  # 776
 
     slots = []
@@ -251,10 +251,10 @@ def generate_outage_card_image(
         draw.rectangle([sx, by, ex, by + bh], fill=c)
 
     # Timeline ticks & hour markers (00, 04, 08, 12, 16, 20, 24)
-    tick_y = by + bh + 19
+    tick_y = by + bh + 21
     for h in (0, 4, 8, 12, 16, 20, 24):
         tx = bx + int(h * (bw / 24))
-        draw.line([tx, by + bh, tx, by + bh + 7], fill=(148, 163, 184), width=1)
+        draw.line([tx, by + bh, tx, by + bh + 8], fill=(148, 163, 184), width=1)
         label = f"{h:02d}:00"
         if h == 0:
             draw.text((bx, tick_y), label, font=font_ticks, fill=(203, 213, 225), anchor="lm")
@@ -286,8 +286,8 @@ def generate_outage_card_image(
         draw.line([nx, by, nx, by + bh], fill=(234, 179, 8), width=3)
 
     # 4. Bottom Stats Summary
-    sy = 262
-    sh = 44
+    sy = 308
+    sh = 50
     pill_gap = 12
     p_w = (bw - pill_gap * 2) // 3  # ~242 px each
 
@@ -300,20 +300,20 @@ def generate_outage_card_image(
 
     # Stat 1: Green light
     p1_x = bx
-    draw.rounded_rectangle([p1_x, sy, p1_x + p_w, sy + sh], radius=8, fill=(36, 41, 64))
-    draw.ellipse([p1_x + 14, sy + 15, p1_x + 28, sy + 29], fill=(34, 197, 94))
-    draw.text((p1_x + 36, sy + 22), f"Зі світлом: ~{light_h} год", font=font_stats, fill=(74, 222, 128), anchor="lm")
+    draw.rounded_rectangle([p1_x, sy, p1_x + p_w, sy + sh], radius=9, fill=(36, 41, 64))
+    draw.ellipse([p1_x + 16, sy + 17, p1_x + 32, sy + 33], fill=(34, 197, 94))
+    draw.text((p1_x + 42, sy + 25), f"Зі світлом: ~{light_h} год", font=font_stats, fill=(74, 222, 128), anchor="lm")
 
     # Stat 2: Red blackout
     p2_x = p1_x + p_w + pill_gap
-    draw.rounded_rectangle([p2_x, sy, p2_x + p_w, sy + sh], radius=8, fill=(36, 41, 64))
-    draw.ellipse([p2_x + 14, sy + 15, p2_x + 28, sy + 29], fill=(239, 68, 68))
-    draw.text((p2_x + 36, sy + 22), f"Без світла: ~{outage_h} год", font=font_stats, fill=(248, 113, 113), anchor="lm")
+    draw.rounded_rectangle([p2_x, sy, p2_x + p_w, sy + sh], radius=9, fill=(36, 41, 64))
+    draw.ellipse([p2_x + 16, sy + 17, p2_x + 32, sy + 33], fill=(239, 68, 68))
+    draw.text((p2_x + 42, sy + 25), f"Без світла: ~{outage_h} год", font=font_stats, fill=(248, 113, 113), anchor="lm")
 
     # Stat 3: Next change / status
     p3_x = p2_x + p_w + pill_gap
-    draw.rounded_rectangle([p3_x, sy, bar_right, sy + sh], radius=8, fill=(36, 41, 64))
-    draw_vector_clock(draw, p3_x + 20, sy + 22, r=8, color=(56, 189, 248))
+    draw.rounded_rectangle([p3_x, sy, bar_right, sy + sh], radius=9, fill=(36, 41, 64))
+    draw_vector_clock(draw, p3_x + 24, sy + 25, r=9, color=(56, 189, 248))
 
     if is_today and next_change_minute is not None:
         ch_h, ch_m = next_change_minute // 60, next_change_minute % 60
@@ -323,7 +323,7 @@ def generate_outage_card_image(
         stat3_label = "Графік на добу"
     else:
         stat3_label = "Без змін"
-    draw.text((p3_x + 36, sy + 22), stat3_label, font=font_stats, fill=(56, 189, 248), anchor="lm")
+    draw.text((p3_x + 42, sy + 25), stat3_label, font=font_stats, fill=(56, 189, 248), anchor="lm")
 
     # Export to memory buffer
     buf = io.BytesIO()
