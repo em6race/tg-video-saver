@@ -130,7 +130,8 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                     await query.message.delete()
                 except Exception:
                     pass
-                sent_msg = await query.message.reply_photo(
+                sent_msg = await context.bot.send_photo(
+                    chat_id=chat_id,
                     photo=img_buf.getvalue(),
                     caption=caption,
                     parse_mode="Markdown",
@@ -152,8 +153,26 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
         _user_last_view_day[user_id] = target_day
 
         sub = await get_outage_subscription(user_id)
-        if not sub or not sub.get("group_name"):
-            await query.answer()
+        notif_enabled = sub.get("notifications_enabled", True) if sub else True
+        adv_enabled = sub.get("notify_advance_30m", True) if sub else True
+        toast_day = "сьогодні" if target_day == "today" else "завтра"
+
+        # Якщо ми знаходимося в текстовому меню (не фото)
+        if query.message.text and "Меню керування графіком" in query.message.text:
+            menu_kb = get_outage_menu_keyboard(
+                notifications_enabled=notif_enabled,
+                notify_advance_30m=adv_enabled,
+                view_day=target_day,
+            )
+            try:
+                await query.edit_message_reply_markup(reply_markup=menu_kb)
+            except Exception:
+                pass
+            await query.answer(f"📅 Розклад перемкнуто на {toast_day}")
+            return True
+
+        if not sub or not sub.get("group_name") or sub.get("group_name") == "None":
+            await query.answer(f"📅 Розклад перемкнуто на {toast_day}")
             return True
 
         region_id = sub.get("region_id", 25)
@@ -162,8 +181,6 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
         region_name = sub.get("region_name", "Київ")
         dso_name = sub.get("dso_name", "ДТЕК")
         address = sub.get("address")
-        notif_enabled = sub.get("notifications_enabled", True)
-        adv_enabled = sub.get("notify_advance_30m", True)
 
         schedule = await yasno_client.get_group_schedule(region_id, dso_id, group)
         if schedule:
@@ -180,7 +197,7 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                 notifications_enabled=notif_enabled,
             )
 
-            # If user is currently in menu view, update menu buttons, otherwise update card
+            # If user is currently in menu photo view, update menu buttons, otherwise update card
             if query.message.caption and "Меню керування графіком" in query.message.caption:
                 menu_kb = get_outage_menu_keyboard(
                     notifications_enabled=notif_enabled,
@@ -203,7 +220,6 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                 except Exception:
                     pass
 
-        toast_day = "сьогодні" if target_day == "today" else "завтра"
         await query.answer(f"📅 Розклад перемкнуто на {toast_day}")
         return True
 
@@ -278,7 +294,11 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
             except Exception:
                 pass
         else:
-            await query.edit_message_text(menu_text, reply_markup=menu_kb, parse_mode="Markdown")
+            try:
+                await query.edit_message_text(menu_text, reply_markup=menu_kb, parse_mode="Markdown")
+            except Exception:
+                pass
+        await set_outage_last_msg_id(user_id, query.message.message_id)
         return True
 
     # 5. Вибір черги / адреси з меню
@@ -413,7 +433,8 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                     await query.message.delete()
                 except Exception:
                     pass
-                sent_msg = await query.message.reply_photo(
+                sent_msg = await context.bot.send_photo(
+                    chat_id=chat_id,
                     photo=img_buf.getvalue(),
                     caption=caption,
                     parse_mode="Markdown",
@@ -798,7 +819,12 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                     reply_markup=kb,
                 )
             else:
-                sent_msg = await query.message.reply_photo(
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                sent_msg = await context.bot.send_photo(
+                    chat_id=chat_id,
                     photo=img_buf.getvalue(),
                     caption=caption,
                     parse_mode="Markdown",

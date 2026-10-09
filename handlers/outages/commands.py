@@ -24,10 +24,24 @@ from handlers.outages.state import _user_last_view_day
 
 logger = logging.getLogger(__name__)
 
+async def cleanup_previous_outage_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> None:
+    """Видаляє попереднє повідомлення розкладу або налаштування, щоб уникнути дублювання."""
+    try:
+        sub = await get_outage_subscription(user_id)
+        if sub and sub.get("last_msg_id"):
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_msg_id"])
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 async def prompt_group_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_msg: str = "") -> None:
     """Prompts the user to select their settlement, region, or search by address."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    await delete_user_command_message(update)
+    await cleanup_previous_outage_message(context, chat_id, user_id)
     await set_outage_awaiting(user_id, chat_id, "search_city")
 
     msg_text = (
@@ -60,11 +74,12 @@ async def prompt_group_setup(update: Update, context: ContextTypes.DEFAULT_TYPE,
         ]
     ]
 
-    await update.effective_message.reply_text(
+    sent_msg = await update.effective_message.reply_text(
         msg_text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+    await set_outage_last_msg_id(user_id, sent_msg.message_id)
 
 async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Головна команда /power або /svitlo: відображає інтерактивний екран стану світла."""
@@ -87,9 +102,11 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
     sub = await get_outage_subscription(user_id)
-    if not sub or not sub.get("group_name") or not sub.get("region_id"):
+    if not sub or not sub.get("group_name") or not sub.get("region_id") or sub.get("group_name") == "None":
         await prompt_group_setup(update, context)
         return
+
+    await cleanup_previous_outage_message(context, chat_id, user_id)
 
     view_day = _user_last_view_day.get(user_id, "today")
     region_id = sub.get("region_id")
@@ -103,7 +120,7 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         schedule = await yasno_client.get_group_schedule(region_id, dso_id, group)
         if not schedule:
-            await update.effective_message.reply_text(
+            sent_msg = await update.effective_message.reply_text(
                 f"❌ Не вдалося знайти групу **{group}** для **{region_name}** ({dso_name}).\n\n"
                 "Спробуйте обрати чергу зі списку або знайти за адресою:",
                 reply_markup=InlineKeyboardMarkup([
@@ -111,6 +128,7 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ]),
                 parse_mode="Markdown"
             )
+            await set_outage_last_msg_id(user_id, sent_msg.message_id)
             return
 
         img_buf = generate_outage_card_image(
@@ -137,7 +155,7 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     except Exception as e:
         logger.error(f"Error fetching outages for user {user_id}: {e}", exc_info=True)
-        await update.effective_message.reply_text(
+        sent_msg = await update.effective_message.reply_text(
             f"❌ Не вдалося завантажити графік: `{e}`\n"
             "Спробуйте оновити пізніше або змінити групу.",
             reply_markup=InlineKeyboardMarkup([
@@ -146,6 +164,7 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             ]),
             parse_mode="Markdown"
         )
+        await set_outage_last_msg_id(user_id, sent_msg.message_id)
 
 async def power_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Увімкнення сповіщень про відключення світла."""

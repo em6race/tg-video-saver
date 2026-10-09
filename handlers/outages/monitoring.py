@@ -100,6 +100,12 @@ async def outages_monitoring_loop(application: Application) -> None:
                     )
                     kb = get_outage_inline_keyboard(view_day="today")
                     try:
+                        old_msg_id = sub.get("last_msg_id")
+                        if old_msg_id:
+                            try:
+                                await application.bot.delete_message(chat_id=chat_id, message_id=old_msg_id)
+                            except Exception:
+                                pass
                         sent = await application.bot.send_photo(
                             chat_id=chat_id,
                             photo=img_buf.getvalue(),
