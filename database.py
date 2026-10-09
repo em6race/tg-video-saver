@@ -112,10 +112,12 @@ def init_db():
             CREATE TABLE IF NOT EXISTS outage_subscriptions (
                 user_id INTEGER PRIMARY KEY,
                 chat_id INTEGER,
-                region_id INTEGER DEFAULT 25,
-                region_name TEXT DEFAULT 'Київ',
-                dso_id INTEGER DEFAULT 902,
-                dso_name TEXT DEFAULT 'ДТЕК Київські електромережі',
+                region_id INTEGER,
+                region_name TEXT,
+                dso_id INTEGER,
+                dso_name TEXT,
+                city_id INTEGER,
+                city_name TEXT,
                 group_name TEXT,
                 address TEXT,
                 notifications_enabled INTEGER DEFAULT 1,
@@ -135,6 +137,18 @@ def init_db():
             pass
         try:
             cursor.execute("ALTER TABLE outage_subscriptions ADD COLUMN lon REAL")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE outage_subscriptions ADD COLUMN city_id INTEGER")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE outage_subscriptions ADD COLUMN city_name TEXT")
+        except Exception:
+            pass
+        try:
+            cursor.execute("UPDATE outage_subscriptions SET region_id=NULL, region_name=NULL, dso_id=NULL, dso_name=NULL, city_id=NULL, city_name=NULL WHERE group_name IS NULL OR group_name='None' OR group_name=''")
         except Exception:
             pass
         conn.commit()
@@ -741,7 +755,7 @@ def get_outage_subscription_sync(user_id: int) -> dict:
             SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
                    group_name, address, notifications_enabled, last_msg_id,
                    last_schedule_hash, awaiting_input, updated_at,
-                   notify_advance_30m, lat, lon
+                   notify_advance_30m, lat, lon, city_id, city_name
             FROM outage_subscriptions WHERE user_id=?
         ''', (int(user_id),))
         row = cursor.fetchone()
@@ -764,6 +778,8 @@ def get_outage_subscription_sync(user_id: int) -> dict:
             "notify_advance_30m": bool(row[13] if len(row) > 13 and row[13] is not None else 1),
             "lat": row[14] if len(row) > 14 else None,
             "lon": row[15] if len(row) > 15 else None,
+            "city_id": row[16] if len(row) > 16 else None,
+            "city_name": row[17] if len(row) > 17 else None,
         }
 
 async def get_outage_subscription(user_id: int) -> dict:
@@ -774,7 +790,7 @@ async def get_outage_subscription(user_id: int) -> dict:
             SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
                    group_name, address, notifications_enabled, last_msg_id,
                    last_schedule_hash, awaiting_input, updated_at,
-                   notify_advance_30m, lat, lon
+                   notify_advance_30m, lat, lon, city_id, city_name
             FROM outage_subscriptions WHERE user_id=?
         ''', (int(user_id),)) as cursor:
             row = await cursor.fetchone()
@@ -797,19 +813,23 @@ async def get_outage_subscription(user_id: int) -> dict:
                 "notify_advance_30m": bool(row[13] if len(row) > 13 and row[13] is not None else 1),
                 "lat": row[14] if len(row) > 14 else None,
                 "lon": row[15] if len(row) > 15 else None,
+                "city_id": row[16] if len(row) > 16 else None,
+                "city_name": row[17] if len(row) > 17 else None,
             }
 
 def save_outage_group_sync(
     user_id: int,
     chat_id: int,
-    region_id: int,
-    region_name: str,
-    dso_id: int,
-    dso_name: str,
-    group_name: str,
+    region_id: int = None,
+    region_name: str = None,
+    dso_id: int = None,
+    dso_name: str = None,
+    group_name: str = None,
     address: str = None,
     lat: float = None,
-    lon: float = None
+    lon: float = None,
+    city_id: int = None,
+    city_name: str = None,
 ):
     now = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
@@ -817,15 +837,17 @@ def save_outage_group_sync(
         cursor.execute('''
             INSERT INTO outage_subscriptions (
                 user_id, chat_id, region_id, region_name, dso_id, dso_name,
-                group_name, address, lat, lon, awaiting_input, updated_at
+                city_id, city_name, group_name, address, lat, lon, awaiting_input, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 chat_id=excluded.chat_id,
-                region_id=excluded.region_id,
-                region_name=excluded.region_name,
-                dso_id=excluded.dso_id,
-                dso_name=excluded.dso_name,
+                region_id=coalesce(excluded.region_id, outage_subscriptions.region_id),
+                region_name=coalesce(excluded.region_name, outage_subscriptions.region_name),
+                dso_id=coalesce(excluded.dso_id, outage_subscriptions.dso_id),
+                dso_name=coalesce(excluded.dso_name, outage_subscriptions.dso_name),
+                city_id=coalesce(excluded.city_id, outage_subscriptions.city_id),
+                city_name=coalesce(excluded.city_name, outage_subscriptions.city_name),
                 group_name=excluded.group_name,
                 address=coalesce(excluded.address, outage_subscriptions.address),
                 lat=coalesce(excluded.lat, outage_subscriptions.lat),
@@ -833,41 +855,45 @@ def save_outage_group_sync(
                 awaiting_input=NULL,
                 updated_at=excluded.updated_at
         ''', (
-            int(user_id), int(chat_id), int(region_id), str(region_name),
-            int(dso_id), str(dso_name), str(group_name), address, lat, lon, now
+            int(user_id), int(chat_id), region_id, region_name,
+            dso_id, dso_name, city_id, city_name, group_name, address, lat, lon, now
         ))
         conn.commit()
 
 async def save_outage_group(
     user_id: int,
     chat_id: int,
-    region_id: int,
-    region_name: str,
-    dso_id: int,
-    dso_name: str,
-    group_name: str,
+    region_id: int = None,
+    region_name: str = None,
+    dso_id: int = None,
+    dso_name: str = None,
+    group_name: str = None,
     address: str = None,
     lat: float = None,
-    lon: float = None
+    lon: float = None,
+    city_id: int = None,
+    city_name: str = None,
 ):
     if aiosqlite is None:
         return await asyncio.to_thread(
-            save_outage_group_sync, user_id, chat_id, region_id, region_name, dso_id, dso_name, group_name, address, lat, lon
+            save_outage_group_sync, user_id, chat_id, region_id, region_name, dso_id, dso_name, group_name, address, lat, lon, city_id, city_name
         )
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             INSERT INTO outage_subscriptions (
                 user_id, chat_id, region_id, region_name, dso_id, dso_name,
-                group_name, address, lat, lon, awaiting_input, updated_at
+                city_id, city_name, group_name, address, lat, lon, awaiting_input, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 chat_id=excluded.chat_id,
-                region_id=excluded.region_id,
-                region_name=excluded.region_name,
-                dso_id=excluded.dso_id,
-                dso_name=excluded.dso_name,
+                region_id=coalesce(excluded.region_id, outage_subscriptions.region_id),
+                region_name=coalesce(excluded.region_name, outage_subscriptions.region_name),
+                dso_id=coalesce(excluded.dso_id, outage_subscriptions.dso_id),
+                dso_name=coalesce(excluded.dso_name, outage_subscriptions.dso_name),
+                city_id=coalesce(excluded.city_id, outage_subscriptions.city_id),
+                city_name=coalesce(excluded.city_name, outage_subscriptions.city_name),
                 group_name=excluded.group_name,
                 address=coalesce(excluded.address, outage_subscriptions.address),
                 lat=coalesce(excluded.lat, outage_subscriptions.lat),
@@ -875,9 +901,64 @@ async def save_outage_group(
                 awaiting_input=NULL,
                 updated_at=excluded.updated_at
         ''', (
-            int(user_id), int(chat_id), int(region_id), str(region_name),
-            int(dso_id), str(dso_name), str(group_name), address, lat, lon, now
+            int(user_id), int(chat_id), region_id, region_name,
+            dso_id, dso_name, city_id, city_name, group_name, address, lat, lon, now
         ))
+        await db.commit()
+
+async def save_outage_city(
+    user_id: int,
+    chat_id: int,
+    region_id: int,
+    region_name: str,
+    dso_id: int,
+    dso_name: str,
+    city_id: int = None,
+    city_name: str = None,
+):
+    now = datetime.utcnow().isoformat()
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO outage_subscriptions (
+                        user_id, chat_id, region_id, region_name, dso_id, dso_name,
+                        city_id, city_name, awaiting_input, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'search_street', ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        chat_id=excluded.chat_id,
+                        region_id=excluded.region_id,
+                        region_name=excluded.region_name,
+                        dso_id=excluded.dso_id,
+                        dso_name=excluded.dso_name,
+                        city_id=excluded.city_id,
+                        city_name=excluded.city_name,
+                        awaiting_input='search_street',
+                        updated_at=excluded.updated_at
+                ''', (int(user_id), int(chat_id), region_id, region_name, dso_id, dso_name, city_id, city_name, now))
+                conn.commit()
+        await asyncio.to_thread(_sync)
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO outage_subscriptions (
+                user_id, chat_id, region_id, region_name, dso_id, dso_name,
+                city_id, city_name, awaiting_input, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'search_street', ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                chat_id=excluded.chat_id,
+                region_id=excluded.region_id,
+                region_name=excluded.region_name,
+                dso_id=excluded.dso_id,
+                dso_name=excluded.dso_name,
+                city_id=excluded.city_id,
+                city_name=excluded.city_name,
+                awaiting_input='search_street',
+                updated_at=excluded.updated_at
+        ''', (int(user_id), int(chat_id), region_id, region_name, dso_id, dso_name, city_id, city_name, now))
         await db.commit()
 
 async def toggle_outage_advance_notification(user_id: int) -> bool:

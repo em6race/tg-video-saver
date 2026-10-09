@@ -25,39 +25,30 @@ from handlers.outages.state import _user_last_view_day
 logger = logging.getLogger(__name__)
 
 async def prompt_group_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_msg: str = "") -> None:
-    """Prompts the user to select their region, group or search by address."""
+    """Prompts the user to select their settlement, region, or search by address."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    await set_outage_awaiting(user_id, chat_id, "select_group")
+    await set_outage_awaiting(user_id, chat_id, "search_city")
 
     msg_text = (
         f"{prefix_msg}"
         "⚡ **Налаштування графіка відключень світла**\n\n"
-        "Щоб бот показував ваш актуальний розклад та попереджав про вимкнення, "
-        "оберіть вашу чергу (групу) або знайдіть її за адресою:\n\n"
-        "💡 **Як вказати групу:**\n"
-        "1️⃣ **Швидкі кнопки груп** (1–6 або 1.1–6.2)\n"
-        "2️⃣ **Пошук за адресою** (вулиця та номер будинку)\n"
-        "3️⃣ **Або просто напишіть у чат номер групи** (наприклад: `/group 2.1` або `3`)"
+        "Вкажіть вашу адресу, щоб бот визначив чергу (групу) та показував актуальний розклад:\n\n"
+        "📍 **Крок 1 з 3: Населений пункт**\n"
+        "Напишіть у чат назву вашого міста чи села (наприклад: `Київ`, `Дніпро`, `Кам'янське`, `Нікополь`, `Павлоград` тощо)\n\n"
+        "💡 *Або оберіть зі швидких кнопок нижче:*"
     )
 
-    # Common quick groups keyboard
     keyboard = [
         [
-            InlineKeyboardButton("1️⃣ Група 1", callback_data="power_quick_group:1.1"),
-            InlineKeyboardButton("2️⃣ Група 2", callback_data="power_quick_group:2.1"),
-            InlineKeyboardButton("3️⃣ Група 3", callback_data="power_quick_group:3.1"),
+            InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:Київ:ДТЕК Київські електромережі:0:Київ"),
         ],
         [
-            InlineKeyboardButton("4️⃣ Група 4", callback_data="power_quick_group:4.1"),
-            InlineKeyboardButton("5️⃣ Група 5", callback_data="power_quick_group:5.1"),
-            InlineKeyboardButton("6️⃣ Група 6", callback_data="power_quick_group:6.1"),
+            InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
+            InlineKeyboardButton("🏙️ Дніпро (ЦЕК)", callback_data="power_set_city:3:303:Дніпро:ЦЕК:6:Дніпро"),
         ],
         [
-            InlineKeyboardButton("🔍 Знайти за адресою", callback_data="power_search_address"),
-            InlineKeyboardButton("🗺️ Обрати регіон / ДТЕК", callback_data="power_regions_list"),
-        ],
-        [
+            InlineKeyboardButton("🗺️ Список всіх областей", callback_data="power_regions_list"),
             InlineKeyboardButton("❌ Закрити", callback_data="close_power_card")
         ]
     ]
@@ -77,7 +68,7 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # Check if arguments were passed (e.g. /power 2.1 or /power on/off)
+    # Check if arguments were passed (e.g. /power on/off)
     args = context.args
     if args and len(args) > 0:
         arg_lower = args[0].lower().strip()
@@ -87,32 +78,18 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         elif arg_lower in ("off", "0", "stop", "disable", "вимк", "вимкнути"):
             await power_off_command(update, context)
             return
-        else:
-            # User passed a group directly (e.g. /power 2.1 or /power 3)
-            group_candidate = args[0].strip()
-            if not "." in group_candidate and group_candidate.isdigit():
-                group_candidate = f"{group_candidate}.1"
-            await save_outage_group(
-                user_id=user_id,
-                chat_id=chat_id,
-                region_id=25,
-                region_name="Київ",
-                dso_id=902,
-                dso_name="ДТЕК Київські електромережі",
-                group_name=group_candidate
-            )
 
     sub = await get_outage_subscription(user_id)
-    if not sub or not sub.get("group_name"):
+    if not sub or not sub.get("group_name") or not sub.get("region_id"):
         await prompt_group_setup(update, context)
         return
 
     view_day = _user_last_view_day.get(user_id, "today")
-    region_id = sub.get("region_id", 25)
-    dso_id = sub.get("dso_id", 902)
+    region_id = sub.get("region_id")
+    dso_id = sub.get("dso_id")
     group = sub.get("group_name")
-    region_name = sub.get("region_name", "Київ")
-    dso_name = sub.get("dso_name", "ДТЕК")
+    region_name = sub.get("city_name") or sub.get("region_name") or "Регіон"
+    dso_name = sub.get("dso_name") or "ДТЕК"
     address = sub.get("address")
     notif_enabled = sub.get("notifications_enabled", True)
 

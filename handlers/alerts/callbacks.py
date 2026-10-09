@@ -628,27 +628,125 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await status_msg.edit_text(nudge_text, reply_markup=kb, parse_mode="Markdown")
             return
 
-        # Якщо бот очікує назву вулиці
-        if awaiting == "search_street" or (not is_alerts_plugin_enabled() and not is_media_plugin_enabled() and len(text) <= 60 and not text.startswith("http")):
-            reg_id = outage_sub.get("region_id", 25) if outage_sub else 25
-            dso_id = outage_sub.get("dso_id", 902) if outage_sub else 902
-            status_msg = await update.message.reply_text(f"🔍 Шукаю вулицю «{text}»...")
+        # 1. Пошук населеного пункту (Крок 1)
+        if awaiting == "search_city" or (
+            (not outage_sub or not outage_sub.get("region_id"))
+            and not text.startswith("/")
+            and len(text) <= 60
+            and not text.startswith("http")
+            and not is_alerts_plugin_enabled()
+        ):
+            text_clean = text.strip()
+            text_lower = text_clean.lower()
+
+            # Якщо ввели Київ
+            if text_lower in ("київ", "м. київ", "м.київ", "kyiv", "kiev"):
+                from database import save_outage_city
+                await save_outage_city(user_id, chat_id, 25, "Київ", 902, "ДТЕК Київські електромережі", None, "Київ")
+                context.user_data["outage_region_id"] = 25
+                context.user_data["outage_dso_id"] = 902
+                context.user_data["outage_city_id"] = None
+                context.user_data["outage_city_name"] = "Київ"
+                await update.message.reply_text(
+                    "✅ Обрано населений пункт: **Київ**!\n\n"
+                    "🔍 **Крок 2 з 3: Вулиця**\n"
+                    "Напишіть у чат назву вашої вулиці (наприклад: `Хрещатик`, `Шевченка`, `Перемоги`):",
+                    parse_mode="Markdown"
+                )
+                return
+
+            # Якщо ввели Дніпро
+            if text_lower in ("дніпро", "м. дніпро", "м.дніпро", "dnipro"):
+                buttons = [
+                    [
+                        InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
+                        InlineKeyboardButton("🏙️ Дніпро (ЦЕК)", callback_data="power_set_city:3:303:Дніпро:ЦЕК:6:Дніпро"),
+                    ],
+                    [InlineKeyboardButton("❌ Скасувати", callback_data="open_power_menu")]
+                ]
+                await update.message.reply_text(
+                    "⚡ Для **м. Дніпро** оберіть вашого оператора розподілу (ОСР):",
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                    parse_mode="Markdown"
+                )
+                return
+
+            # Пошук серед населених пунктів Yasno (Дніпропетровська обл.)
+            status_msg = await update.message.reply_text(f"🔍 Шукаю населений пункт «{text_clean}»...")
             try:
-                streets = await yasno_client.search_streets(reg_id, dso_id, text)
-                if streets:
-                    buttons = []
-                    for s in streets[:6]:
-                        buttons.append([InlineKeyboardButton(s["value"], callback_data=f"power_sel_st:{s['id']}")])
-                    buttons.append([InlineKeyboardButton("❌ Скасувати", callback_data="close_power_card")])
+                cities = await yasno_client.get_cities(3, 301)
+                matches = [c for c in cities if text_lower in c.get("value", "").lower()]
+                if len(matches) == 1:
+                    c = matches[0]
+                    from database import save_outage_city
+                    await save_outage_city(user_id, chat_id, 3, "Дніпро", 301, "ДТЕК Дніпровські електромережі", c["id"], c["value"])
+                    context.user_data["outage_region_id"] = 3
+                    context.user_data["outage_dso_id"] = 301
+                    context.user_data["outage_city_id"] = c["id"]
+                    context.user_data["outage_city_name"] = c["value"]
                     await status_msg.edit_text(
-                        f"📍 Оберіть вашу вулицю серед знайдених за запитом «{text}»:",
+                        f"✅ Обрано населений пункт: **{c['value']}**!\n\n"
+                        "🔍 **Крок 2 з 3: Вулиця**\n"
+                        "Напишіть у чат назву вашої вулиці (наприклад: `Центральна`, `Шевченка`, `Перемоги`):",
+                        parse_mode="Markdown"
+                    )
+                    return
+                elif len(matches) > 1 and len(matches) <= 8:
+                    buttons = []
+                    for c in matches:
+                        buttons.append([InlineKeyboardButton(c["value"], callback_data=f"power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:{c['id']}:{c['value'][:25]}")])
+                    buttons.append([InlineKeyboardButton("❌ Скасувати", callback_data="open_power_menu")])
+                    await status_msg.edit_text(
+                        f"📍 Оберіть населений пункт серед знайдених за запитом «{text_clean}»:",
                         reply_markup=InlineKeyboardMarkup(buttons)
                     )
                     return
                 else:
+                    buttons = [
+                        [InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:Київ:ДТЕК Київські електромережі:0:Київ")],
+                        [
+                            InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
+                            InlineKeyboardButton("🏙️ Дніпро (ЦЕК)", callback_data="power_set_city:3:303:Дніпро:ЦЕК:6:Дніпро"),
+                        ],
+                        [InlineKeyboardButton("🗺️ Список всіх областей", callback_data="power_regions_list")]
+                    ]
                     await status_msg.edit_text(
-                        f"❌ Вулицю «{text}» не знайдено.\n"
-                        "Спробуйте ввести лише назву без слова «вулиця» (наприклад: `Хрещатик`, `Шевченка`, `Перемоги`):"
+                        f"❌ Населений пункт «{text_clean}» не знайдено в базі Yasno (наразі підтримуються Київ та область, Дніпропетровська область).\n"
+                        "Перевірте написання або оберіть варіант нижче:",
+                        reply_markup=InlineKeyboardMarkup(buttons)
+                    )
+                    return
+            except Exception as city_err:
+                logger.error(f"Error searching cities: {city_err}")
+                await status_msg.edit_text(f"❌ Помилка пошуку міста: {city_err}")
+                return
+
+        # 2. Пошук вулиці (Крок 2)
+        elif awaiting == "search_street":
+            reg_id = outage_sub.get("region_id") or context.user_data.get("outage_region_id") or 25
+            dso_id = outage_sub.get("dso_id") or context.user_data.get("outage_dso_id") or 902
+            city_id = outage_sub.get("city_id") or context.user_data.get("outage_city_id")
+            city_name = outage_sub.get("city_name") or context.user_data.get("outage_city_name") or outage_sub.get("region_name") or "обраного міста"
+            status_msg = await update.message.reply_text(f"🔍 Шукаю вулицю «{text}» у {city_name}...")
+            try:
+                streets = await yasno_client.search_streets(reg_id, dso_id, text, city_id=city_id)
+                if streets:
+                    buttons = []
+                    for s in streets[:8]:
+                        buttons.append([InlineKeyboardButton(s["value"], callback_data=f"power_sel_st:{s['id']}:{s['value'][:25]}")])
+                    buttons.append([InlineKeyboardButton("⬅️ Змінити місто", callback_data="power_search_address")])
+                    buttons.append([InlineKeyboardButton("❌ Скасувати", callback_data="open_power_menu")])
+                    await status_msg.edit_text(
+                        f"📍 Оберіть вашу вулицю у **{city_name}** серед знайдених за запитом «{text}»:",
+                        reply_markup=InlineKeyboardMarkup(buttons),
+                        parse_mode="Markdown"
+                    )
+                    return
+                else:
+                    await status_msg.edit_text(
+                        f"❌ Вулицю «{text}» не знайдено у **{city_name}**.\n"
+                        "Спробуйте ввести лише назву без слова «вулиця» (наприклад: `Хрещатик`, `Шевченка`, `Центральна`):",
+                        parse_mode="Markdown"
                     )
                     return
             except Exception as search_err:
@@ -656,26 +754,44 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await status_msg.edit_text(f"❌ Помилка пошуку вулиці: {search_err}")
                 return
 
-        # Якщо бот очікує номер будинку
+        # 3. Пошук будинку та збереження групи (Крок 3)
         elif awaiting == "search_house":
             street_id = context.user_data.get("outage_street_id")
+            street_name = context.user_data.get("outage_street_name", "")
             if street_id:
-                reg_id = outage_sub.get("region_id", 25) if outage_sub else 25
-                dso_id = outage_sub.get("dso_id", 902) if outage_sub else 902
+                reg_id = outage_sub.get("region_id") or context.user_data.get("outage_region_id") or 25
+                dso_id = outage_sub.get("dso_id") or context.user_data.get("outage_dso_id") or 902
+                city_id = outage_sub.get("city_id") or context.user_data.get("outage_city_id")
+                city_name = outage_sub.get("city_name") or context.user_data.get("outage_city_name") or outage_sub.get("region_name") or "обраного міста"
                 status_msg = await update.message.reply_text(f"🔍 Шукаю будинок «{text}»...")
                 try:
                     houses = await yasno_client.search_houses(reg_id, dso_id, street_id, text)
                     if houses:
                         target_house = next((h for h in houses if h.get("value", "").strip().lower() == text.lower()), houses[0])
                         house_id = target_house["id"]
-                        group_res = await yasno_client.get_group_by_address(reg_id, dso_id, street_id, house_id)
-                        if group_res and group_res.get("group"):
-                            grp = group_res["group"]
-                            full_addr = f"{target_house.get('value')}"
-                            reg_name = outage_sub.get("region_name", "Київ") if outage_sub else "Київ"
-                            dso_name = outage_sub.get("dso_name", "ДТЕК") if outage_sub else "ДТЕК"
-                            await save_outage_group(user_id, chat_id, reg_id, reg_name, dso_id, dso_name, grp, address=full_addr)
-                            await status_msg.edit_text(f"🎉 Знайдено групу для будинку: **{grp}**!")
+                        group_res = await yasno_client.resolve_group_by_address(reg_id, dso_id, street_id, house_id, city_id=city_id)
+                        if group_res:
+                            full_addr = f"{city_name}, вул. {street_name}, {target_house.get('value')}"
+                            reg_name = outage_sub.get("region_name") or "Київ"
+                            dso_name = outage_sub.get("dso_name") or "ДТЕК"
+                            await save_outage_group(
+                                user_id=user_id,
+                                chat_id=chat_id,
+                                region_id=reg_id,
+                                region_name=reg_name,
+                                dso_id=dso_id,
+                                dso_name=dso_name,
+                                group_name=group_res,
+                                address=full_addr,
+                                city_id=city_id,
+                                city_name=city_name,
+                            )
+                            await status_msg.edit_text(
+                                f"🎉 Знайдено групу для будинку: **{group_res}**!\n"
+                                f"• Адреса: `{full_addr}`\n\n"
+                                "Завантажую ваш розклад...",
+                                parse_mode="Markdown"
+                            )
                             await power_command(update, context)
                             return
                         else:

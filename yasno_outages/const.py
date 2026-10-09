@@ -12,6 +12,9 @@ PLANNED_OUTAGES_ENDPOINT: Final = (
 PROBABLE_OUTAGES_ENDPOINT: Final = (
     "https://app.yasno.ua/api/blackout-service/public/shutdowns/probable-outages"
 )
+CITIES_ENDPOINT: Final = (
+    "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2/cities"
+)
 STREETS_ENDPOINT: Final = (
     "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2/streets"
 )

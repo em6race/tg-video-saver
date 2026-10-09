@@ -10,6 +10,7 @@ from yasno_outages.const import (
     REGIONS_ENDPOINT,
     PLANNED_OUTAGES_ENDPOINT,
     PROBABLE_OUTAGES_ENDPOINT,
+    CITIES_ENDPOINT,
     STREETS_ENDPOINT,
     HOUSES_ENDPOINT,
     GROUP_BY_ADDRESS_ENDPOINT,
@@ -165,24 +166,52 @@ class YasnoClient:
         except Exception:
             return sorted(keys)
 
-    async def search_streets(self, region_id: int, dso_id: int, query: str) -> List[Dict[str, Any]]:
+    async def get_cities(self, region_id: int, dso_id: int) -> List[Dict[str, Any]]:
+        """Fetch all cities/settlements for a region and DSO."""
+        cache_key = f"cities_{region_id}_{dso_id}"
+        now = time.time()
+        if cache_key in _CACHE:
+            ts, data = _CACHE[cache_key]
+            if now - ts < 3600:
+                return data
+
+        params = {"regionId": region_id, "dsoId": dso_id}
+        try:
+            data = await self._fetch_json(CITIES_ENDPOINT, params=params)
+            if isinstance(data, list):
+                _CACHE[cache_key] = (now, data)
+                return data
+        except Exception as e:
+            logger.warning(f"Error fetching cities for {region_id}/{dso_id}: {e}")
+        return []
+
+    async def search_streets(
+        self,
+        region_id: int,
+        dso_id: int,
+        query: str,
+        city_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         """Search streets in region and DSO by text query."""
         query = query.strip()
         if not query:
             return []
 
-        cache_key = f"streets_{region_id}_{dso_id}_{query.lower()}"
+        cache_key = f"streets_{region_id}_{dso_id}_{city_id}_{query.lower()}"
         now = time.time()
         if cache_key in _CACHE:
             ts, data = _CACHE[cache_key]
             if now - ts < STREETS_CACHE_TTL:
                 return data
 
-        params = {
+        params: Dict[str, Any] = {
             "regionId": region_id,
             "dsoId": dso_id,
             "query": query,
         }
+        if city_id is not None:
+            params["cityId"] = city_id
+
         data = await self._fetch_json(STREETS_ENDPOINT, params=params)
         if isinstance(data, list):
             _CACHE[cache_key] = (now, data)
@@ -208,14 +237,18 @@ class YasnoClient:
         dso_id: int,
         street_id: int,
         house_id: int,
+        city_id: Optional[int] = None,
     ) -> Optional[str]:
         """Resolve exact group string (e.g. '20.1') by address components."""
-        params = {
+        params: Dict[str, Any] = {
             "regionId": region_id,
             "dsoId": dso_id,
             "streetId": street_id,
             "houseId": house_id,
         }
+        if city_id is not None:
+            params["cityId"] = city_id
+
         data = await self._fetch_json(GROUP_BY_ADDRESS_ENDPOINT, params=params)
         if isinstance(data, dict):
             grp = data.get("group")

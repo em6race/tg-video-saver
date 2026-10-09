@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from database import (
     get_outage_subscription,
     save_outage_group,
+    save_outage_city,
     set_outage_awaiting,
     set_outage_last_msg_id,
     toggle_outage_notifications,
@@ -250,17 +251,17 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
     elif choice == "open_power_menu":
         await query.answer()
         sub = await get_outage_subscription(user_id)
-        curr_grp = sub.get("group_name", "не обрано") if sub else "не обрано"
-        curr_reg = sub.get("region_name", "Київ") if sub else "Київ"
-        curr_dso = sub.get("dso_name", "ДТЕК") if sub else "ДТЕК"
-        curr_addr = sub.get("address") or "не вказано"
+        curr_grp = sub.get("group_name") if sub and sub.get("group_name") and sub.get("group_name") != "None" else "не обрано"
+        curr_reg = (sub.get("city_name") or sub.get("region_name")) if sub and (sub.get("city_name") or sub.get("region_name")) else "не обрано"
+        curr_dso = f" ({sub.get('dso_name')})" if sub and sub.get("dso_name") and (sub.get("city_name") or sub.get("region_name")) else ""
+        curr_addr = sub.get("address") if sub and sub.get("address") else "не вказано"
         notif_enabled = sub.get("notifications_enabled", True) if sub else True
         adv_enabled = sub.get("notify_advance_30m", True) if sub else True
         view_day = _user_last_view_day.get(user_id, "today")
 
         menu_text = (
             "⚙️ **Меню керування графіком відключень**\n\n"
-            f"• Регіон: **{curr_reg}** ({curr_dso})\n"
+            f"• Регіон / місто: **{curr_reg}**{curr_dso}\n"
             f"• Черга (група): **{curr_grp}**\n"
             f"• Адреса: `{curr_addr}`\n\n"
             "Оберіть дію або налаштування нижче:"
@@ -284,32 +285,53 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
     elif choice == "outage_setup_start":
         await query.answer()
         sub = await get_outage_subscription(user_id)
-        curr_reg = sub.get("region_name", "Київ") if sub else "Київ"
+        curr_reg = (sub.get("city_name") or sub.get("region_name")) if sub and (sub.get("city_name") or sub.get("region_name")) else None
 
-        setup_text = (
-            f"📍 **Налаштування черги ({curr_reg})**\n\n"
-            "Оберіть вашу чергу (групу) зі швидких кнопок нижче, "
-            "знайдіть за адресою або скористайтеся координатами:"
-        )
-        buttons = [
-            [
-                InlineKeyboardButton("1️⃣ Група 1", callback_data="power_quick_group:1.1"),
-                InlineKeyboardButton("2️⃣ Група 2", callback_data="power_quick_group:2.1"),
-                InlineKeyboardButton("3️⃣ Група 3", callback_data="power_quick_group:3.1"),
-            ],
-            [
-                InlineKeyboardButton("4️⃣ Група 4", callback_data="power_quick_group:4.1"),
-                InlineKeyboardButton("5️⃣ Група 5", callback_data="power_quick_group:5.1"),
-                InlineKeyboardButton("6️⃣ Група 6", callback_data="power_quick_group:6.1"),
-            ],
-            [
-                InlineKeyboardButton("🔍 Пошук за адресою", callback_data="power_search_address"),
-                InlineKeyboardButton("🗺️ Змінити регіон", callback_data="power_regions_list"),
-            ],
-            [
-                InlineKeyboardButton("🔙 Назад до меню", callback_data="open_power_menu")
+        if not curr_reg:
+            await set_outage_awaiting(user_id, chat_id, "search_city")
+            setup_text = (
+                "📍 **Крок 1 з 3: Вкажіть населений пункт**\n\n"
+                "Напишіть у чат назву вашого міста чи села (наприклад: `Київ`, `Дніпро`, `Кам'янське`, `Нікополь`, `Павлоград` тощо):\n\n"
+                "💡 *Або оберіть зі швидких кнопок нижче:*"
+            )
+            buttons = [
+                [
+                    InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:Київ:ДТЕК Київські електромережі:0:Київ"),
+                ],
+                [
+                    InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
+                    InlineKeyboardButton("🏙️ Дніпро (ЦЕК)", callback_data="power_set_city:3:303:Дніпро:ЦЕК:6:Дніпро"),
+                ],
+                [
+                    InlineKeyboardButton("🗺️ Список всіх областей", callback_data="power_regions_list"),
+                    InlineKeyboardButton("🔙 До меню", callback_data="open_power_menu"),
+                ]
             ]
-        ]
+        else:
+            setup_text = (
+                f"📍 **Налаштування черги ({curr_reg})**\n\n"
+                "Оберіть вашу чергу (групу) зі швидких кнопок нижче, "
+                "знайдіть за адресою або змініть місто:"
+            )
+            buttons = [
+                [
+                    InlineKeyboardButton("1️⃣ Група 1", callback_data="power_quick_group:1.1"),
+                    InlineKeyboardButton("2️⃣ Група 2", callback_data="power_quick_group:2.1"),
+                    InlineKeyboardButton("3️⃣ Група 3", callback_data="power_quick_group:3.1"),
+                ],
+                [
+                    InlineKeyboardButton("4️⃣ Група 4", callback_data="power_quick_group:4.1"),
+                    InlineKeyboardButton("5️⃣ Група 5", callback_data="power_quick_group:5.1"),
+                    InlineKeyboardButton("6️⃣ Група 6", callback_data="power_quick_group:6.1"),
+                ],
+                [
+                    InlineKeyboardButton("🔍 Пошук за адресою", callback_data="power_search_address"),
+                    InlineKeyboardButton("🗺️ Змінити місто / регіон", callback_data="power_search_address"),
+                ],
+                [
+                    InlineKeyboardButton("🔙 Назад до меню", callback_data="open_power_menu")
+                ]
+            ]
         if query.message.photo:
             try:
                 await query.edit_message_caption(caption=setup_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
@@ -324,10 +346,14 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
         await query.answer()
         selected_grp = choice.split(":")[-1]
         sub = await get_outage_subscription(user_id)
-        region_id = sub.get("region_id", 25) if sub else 25
-        region_name = sub.get("region_name", "Київ") if sub else "Київ"
-        dso_id = sub.get("dso_id", 902) if sub else 902
-        dso_name = sub.get("dso_name", "ДТЕК Київські електромережі") if sub else "ДТЕК Київські електромережі"
+        if not sub or not sub.get("region_id"):
+            await query.answer("📍 Спочатку вкажіть ваш населений пункт!", show_alert=True)
+            await set_outage_awaiting(user_id, chat_id, "search_city")
+            return True
+        region_id = sub.get("region_id")
+        region_name = sub.get("region_name")
+        dso_id = sub.get("dso_id")
+        dso_name = sub.get("dso_name")
 
         await save_outage_group(
             user_id=user_id,
@@ -465,42 +491,111 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                 await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
         return True
 
-    # 9. Пошук за адресою
+    # 9. Пошук за адресою (Крок 1: Населений пункт)
     elif choice == "power_search_address":
         await query.answer()
-        await set_outage_awaiting(user_id, chat_id, "search_street")
+        await set_outage_awaiting(user_id, chat_id, "search_city")
         msg_text = (
-            "🔍 **Пошук черги за адресою**\n\n"
-            "Напишіть у чат назву вашої вулиці (наприклад: `Хрещатик`, `Шевченка`, `Перемоги`):"
+            "📍 **Крок 1 з 3: Вкажіть населений пункт**\n\n"
+            "Напишіть у чат назву вашого міста чи села (наприклад: `Київ`, `Дніпро`, `Кам'янське`, `Нікополь`, `Павлоград` тощо):\n\n"
+            "💡 *Або оберіть зі швидких кнопок нижче:*"
         )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="open_power_menu")]])
+        buttons = [
+            [
+                InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:Київ:ДТЕК Київські електромережі:0:Київ"),
+            ],
+            [
+                InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
+                InlineKeyboardButton("🏙️ Дніпро (ЦЕК)", callback_data="power_set_city:3:303:Дніпро:ЦЕК:6:Дніпро"),
+            ],
+            [
+                InlineKeyboardButton("🗺️ Список всіх областей", callback_data="power_regions_list"),
+                InlineKeyboardButton("⬅️ Назад в меню", callback_data="open_power_menu"),
+            ]
+        ]
         if query.message.photo:
             try:
-                await query.edit_message_caption(caption=msg_text, reply_markup=kb, parse_mode="Markdown")
+                await query.edit_message_caption(caption=msg_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
             except Exception:
                 pass
         else:
-            await query.edit_message_text(msg_text, reply_markup=kb, parse_mode="Markdown")
+            await query.edit_message_text(msg_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+        return True
+
+    # 9b. Збереження обраного міста та перехід до Кроку 2 (Вулиця)
+    elif choice.startswith("power_set_city:"):
+        await query.answer()
+        parts = choice.split(":")
+        r_id = int(parts[1])
+        d_id = int(parts[2])
+        r_name = parts[3]
+        d_name = parts[4]
+        c_id = int(parts[5]) if len(parts) > 5 and parts[5] != "0" else None
+        c_name = parts[6] if len(parts) > 6 else r_name
+
+        await save_outage_city(
+            user_id=user_id,
+            chat_id=chat_id,
+            region_id=r_id,
+            region_name=r_name,
+            dso_id=d_id,
+            dso_name=d_name,
+            city_id=c_id,
+            city_name=c_name,
+        )
+        context.user_data["outage_region_id"] = r_id
+        context.user_data["outage_dso_id"] = d_id
+        context.user_data["outage_city_id"] = c_id
+        context.user_data["outage_city_name"] = c_name
+
+        await set_outage_awaiting(user_id, chat_id, "search_street")
+        msg_text = (
+            f"🔍 **Крок 2 з 3: Вулиця ({c_name})**\n\n"
+            "Напишіть у чат назву вашої вулиці (наприклад: `Центральна`, `Шевченка`, `Хрещатик`):"
+        )
+        buttons = [
+            [InlineKeyboardButton("⬅️ Змінити місто", callback_data="power_search_address")],
+            [InlineKeyboardButton("❌ Скасувати", callback_data="open_power_menu")],
+        ]
+        if query.message.photo:
+            try:
+                await query.edit_message_caption(caption=msg_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+            except Exception:
+                pass
+        else:
+            await query.edit_message_text(msg_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
         return True
 
     # 10. Вибір вулиці
     elif choice.startswith("power_sel_st:"):
         await query.answer()
-        st_id = int(choice.split(":")[-1])
+        parts = choice.split(":", 2)
+        st_id = int(parts[1])
+        st_name = parts[2] if len(parts) > 2 else ""
+
         context.user_data["outage_street_id"] = st_id
+        context.user_data["outage_street_name"] = st_name
         await set_outage_awaiting(user_id, chat_id, "search_house")
+
+        sub = await get_outage_subscription(user_id)
+        city_display = (sub.get("city_name") if sub else None) or (context.user_data.get("outage_city_name")) or "обраного міста"
+
         msg_text = (
-            "🏠 **Вулицю обрано!**\n\n"
+            f"🏠 **Крок 3 з 3: Номер будинку**\n\n"
+            f"• Вулиця: **{st_name}** ({city_display})\n\n"
             "Тепер напишіть у чат **номер вашого будинку** (наприклад: `1`, `15/2`, `44-А`):"
         )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Скасувати", callback_data="open_power_menu")]])
+        buttons = [
+            [InlineKeyboardButton("⬅️ Змінити вулицю", callback_data="power_search_address")],
+            [InlineKeyboardButton("❌ Скасувати", callback_data="open_power_menu")],
+        ]
         if query.message.photo:
             try:
-                await query.edit_message_caption(caption=msg_text, reply_markup=kb, parse_mode="Markdown")
+                await query.edit_message_caption(caption=msg_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
             except Exception:
                 pass
         else:
-            await query.edit_message_text(msg_text, reply_markup=kb, parse_mode="Markdown")
+            await query.edit_message_text(msg_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
         return True
 
     # 11. Коригування координат (джойстик ±50м)
