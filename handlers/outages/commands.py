@@ -141,7 +141,7 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             view_day=view_day,
             notifications_enabled=notif_enabled,
         )
-        kb = get_outage_inline_keyboard()
+        kb = get_outage_inline_keyboard(view_day=view_day)
 
         sent_msg = await update.effective_message.reply_photo(
             photo=img_buf.getvalue(),

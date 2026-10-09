@@ -113,7 +113,7 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                 view_day=view_day,
                 notifications_enabled=notif_enabled,
             )
-            kb = get_outage_inline_keyboard()
+            kb = get_outage_inline_keyboard(view_day=view_day)
 
             if query.message.photo:
                 try:
@@ -197,7 +197,7 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                 try:
                     await query.edit_message_media(
                         media=InputMediaPhoto(media=img_buf.getvalue(), caption=caption, parse_mode="Markdown"),
-                        reply_markup=get_outage_inline_keyboard(),
+                        reply_markup=get_outage_inline_keyboard(view_day=target_day),
                     )
                 except Exception:
                     pass
@@ -354,7 +354,7 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                 view_day=view_day,
                 notifications_enabled=True,
             )
-            kb = get_outage_inline_keyboard()
+            kb = get_outage_inline_keyboard(view_day=view_day)
 
             if query.message.photo:
                 await query.edit_message_media(
@@ -583,7 +583,7 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                 view_day=view_day,
                 notifications_enabled=True,
             )
-            kb = get_outage_inline_keyboard()
+            kb = get_outage_inline_keyboard(view_day=view_day)
 
             if query.message.photo:
                 await query.edit_message_media(

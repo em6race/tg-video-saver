@@ -98,7 +98,7 @@ async def outages_monitoring_loop(application: Application) -> None:
                         "⚠️ **Увага! Графік відключень оновлено!**\n\n"
                         + format_outage_caption(group_sched, view_day="today", notifications_enabled=True)
                     )
-                    kb = get_outage_inline_keyboard()
+                    kb = get_outage_inline_keyboard(view_day="today")
                     try:
                         sent = await application.bot.send_photo(
                             chat_id=chat_id,
