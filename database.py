@@ -125,6 +125,18 @@ def init_db():
                 updated_at TEXT
             )
         ''')
+        try:
+            cursor.execute("ALTER TABLE outage_subscriptions ADD COLUMN notify_advance_30m INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE outage_subscriptions ADD COLUMN lat REAL")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE outage_subscriptions ADD COLUMN lon REAL")
+        except Exception:
+            pass
         conn.commit()
 
 # --- АСИНХРОННИЙ КЕШ ФАЙЛІВ (ДЛЯ ПЛАГІНА МЕДІА) ---
@@ -728,7 +740,8 @@ def get_outage_subscription_sync(user_id: int) -> dict:
         cursor.execute('''
             SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
                    group_name, address, notifications_enabled, last_msg_id,
-                   last_schedule_hash, awaiting_input, updated_at
+                   last_schedule_hash, awaiting_input, updated_at,
+                   notify_advance_30m, lat, lon
             FROM outage_subscriptions WHERE user_id=?
         ''', (int(user_id),))
         row = cursor.fetchone()
@@ -747,7 +760,10 @@ def get_outage_subscription_sync(user_id: int) -> dict:
             "last_msg_id": row[9],
             "last_schedule_hash": row[10],
             "awaiting_input": row[11],
-            "updated_at": row[12]
+            "updated_at": row[12],
+            "notify_advance_30m": bool(row[13] if len(row) > 13 and row[13] is not None else 1),
+            "lat": row[14] if len(row) > 14 else None,
+            "lon": row[15] if len(row) > 15 else None,
         }
 
 async def get_outage_subscription(user_id: int) -> dict:
@@ -757,7 +773,8 @@ async def get_outage_subscription(user_id: int) -> dict:
         async with db.execute('''
             SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
                    group_name, address, notifications_enabled, last_msg_id,
-                   last_schedule_hash, awaiting_input, updated_at
+                   last_schedule_hash, awaiting_input, updated_at,
+                   notify_advance_30m, lat, lon
             FROM outage_subscriptions WHERE user_id=?
         ''', (int(user_id),)) as cursor:
             row = await cursor.fetchone()
@@ -776,7 +793,10 @@ async def get_outage_subscription(user_id: int) -> dict:
                 "last_msg_id": row[9],
                 "last_schedule_hash": row[10],
                 "awaiting_input": row[11],
-                "updated_at": row[12]
+                "updated_at": row[12],
+                "notify_advance_30m": bool(row[13] if len(row) > 13 and row[13] is not None else 1),
+                "lat": row[14] if len(row) > 14 else None,
+                "lon": row[15] if len(row) > 15 else None,
             }
 
 def save_outage_group_sync(
@@ -787,7 +807,9 @@ def save_outage_group_sync(
     dso_id: int,
     dso_name: str,
     group_name: str,
-    address: str = None
+    address: str = None,
+    lat: float = None,
+    lon: float = None
 ):
     now = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
@@ -795,9 +817,9 @@ def save_outage_group_sync(
         cursor.execute('''
             INSERT INTO outage_subscriptions (
                 user_id, chat_id, region_id, region_name, dso_id, dso_name,
-                group_name, address, awaiting_input, updated_at
+                group_name, address, lat, lon, awaiting_input, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 region_id=excluded.region_id,
@@ -806,11 +828,13 @@ def save_outage_group_sync(
                 dso_name=excluded.dso_name,
                 group_name=excluded.group_name,
                 address=coalesce(excluded.address, outage_subscriptions.address),
+                lat=coalesce(excluded.lat, outage_subscriptions.lat),
+                lon=coalesce(excluded.lon, outage_subscriptions.lon),
                 awaiting_input=NULL,
                 updated_at=excluded.updated_at
         ''', (
             int(user_id), int(chat_id), int(region_id), str(region_name),
-            int(dso_id), str(dso_name), str(group_name), address, now
+            int(dso_id), str(dso_name), str(group_name), address, lat, lon, now
         ))
         conn.commit()
 
@@ -822,20 +846,22 @@ async def save_outage_group(
     dso_id: int,
     dso_name: str,
     group_name: str,
-    address: str = None
+    address: str = None,
+    lat: float = None,
+    lon: float = None
 ):
     if aiosqlite is None:
         return await asyncio.to_thread(
-            save_outage_group_sync, user_id, chat_id, region_id, region_name, dso_id, dso_name, group_name, address
+            save_outage_group_sync, user_id, chat_id, region_id, region_name, dso_id, dso_name, group_name, address, lat, lon
         )
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             INSERT INTO outage_subscriptions (
                 user_id, chat_id, region_id, region_name, dso_id, dso_name,
-                group_name, address, awaiting_input, updated_at
+                group_name, address, lat, lon, awaiting_input, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 chat_id=excluded.chat_id,
                 region_id=excluded.region_id,
@@ -844,13 +870,54 @@ async def save_outage_group(
                 dso_name=excluded.dso_name,
                 group_name=excluded.group_name,
                 address=coalesce(excluded.address, outage_subscriptions.address),
+                lat=coalesce(excluded.lat, outage_subscriptions.lat),
+                lon=coalesce(excluded.lon, outage_subscriptions.lon),
                 awaiting_input=NULL,
                 updated_at=excluded.updated_at
         ''', (
             int(user_id), int(chat_id), int(region_id), str(region_name),
-            int(dso_id), str(dso_name), str(group_name), address, now
+            int(dso_id), str(dso_name), str(group_name), address, lat, lon, now
         ))
         await db.commit()
+
+async def toggle_outage_advance_notification(user_id: int) -> bool:
+    sub = await get_outage_subscription(user_id)
+    curr = sub.get("notify_advance_30m", True) if sub else True
+    new_val = 0 if curr else 1
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE outage_subscriptions SET notify_advance_30m=? WHERE user_id=?", (new_val, int(user_id)))
+                conn.commit()
+        await asyncio.to_thread(_sync)
+        return bool(new_val)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE outage_subscriptions SET notify_advance_30m=? WHERE user_id=?", (new_val, int(user_id)))
+        await db.commit()
+    return bool(new_val)
+
+async def save_outage_coords(user_id: int, lat: float, lon: float, address: str = None):
+    now = datetime.utcnow().isoformat()
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE outage_subscriptions
+                    SET lat=?, lon=?, address=coalesce(?, address), updated_at=?
+                    WHERE user_id=?
+                ''', (lat, lon, address, now, int(user_id)))
+                conn.commit()
+        return await asyncio.to_thread(_sync)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            UPDATE outage_subscriptions
+            SET lat=?, lon=?, address=coalesce(?, address), updated_at=?
+            WHERE user_id=?
+        ''', (lat, lon, address, now, int(user_id)))
+        await db.commit()
+
 
 async def set_outage_awaiting(user_id: int, chat_id: int, awaiting_input: str = None):
     now = datetime.utcnow().isoformat()

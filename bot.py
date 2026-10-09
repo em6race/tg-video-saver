@@ -160,8 +160,11 @@ def main() -> None:
         application.add_handler(CommandHandler("alerts_off", alerts_off_command))
         application.add_handler(CommandHandler("map", map_command))
         application.add_handler(CommandHandler(["putin", "dox", "dead"], putin_command))
+
+    if alerts_enabled or outages_enabled:
         application.add_handler(MessageHandler(filters.LOCATION, location_handler))
         application.add_handler(MessageHandler(filters.Regex(r"^❌ Скасувати$"), cancel_handler))
+
 
     # Модульний плагін завантаження медіа (вмикається тільки якщо ENABLE_MEDIA_PLUGIN=true)
     if media_enabled:

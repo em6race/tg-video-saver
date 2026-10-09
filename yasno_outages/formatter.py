@@ -264,3 +264,59 @@ def format_outage_card(
         f"🔄 Оновлено: `{updated_time_str}` • Сповіщення: {notif_icon}"
     )
     return msg
+
+
+def format_outage_caption(
+    group_schedule: GroupSchedule,
+    view_day: str = "today",
+    notifications_enabled: bool = True
+) -> str:
+    """
+    Formats the sleek message caption to accompany the visual infographic card.
+    Example:
+    ⚡ **Розклад відключень на сьогодні 10.10.2026**
+
+    • 🔴 00:00 – 00:30 (30 хв) — Відключення
+    • 🟢 00:30 – 15:00 (14 год 30 хв) — Світло є
+    • 🔴 15:00 – 18:30 (3 год 30 хв) — Відключення
+    • 🟢 18:30 – 24:00 (5 год 30 хв) — Світло є
+
+    🔄 Оновлено: 01:25:00 • 🔔 Сповіщення: УВІМК
+    """
+    now = get_current_kyiv_time()
+    today_date = now.date()
+    tomorrow_date = today_date + datetime.timedelta(days=1)
+
+    is_viewing_today = (view_day == "today")
+    target_schedule = group_schedule.today if is_viewing_today else group_schedule.tomorrow
+    target_date = today_date if is_viewing_today else tomorrow_date
+
+    day_word = "сьогодні" if is_viewing_today else "завтра"
+    date_formatted = target_date.strftime("%d.%m.%Y")
+    header = f"⚡ **Розклад відключень на {day_word} {date_formatted}**"
+
+    lines = [header, ""]
+
+    if target_schedule.slots:
+        for s in target_schedule.slots:
+            dur_str = format_duration(s.duration_minutes)
+            if s.slot_type == "Definite":
+                lines.append(f"• 🔴 {s.start_time_str} – {s.end_time_str} ({dur_str}) — Відключення")
+            elif s.slot_type == "Probable":
+                lines.append(f"• 🟡 {s.start_time_str} – {s.end_time_str} ({dur_str}) — Можливе відключення")
+            else:
+                lines.append(f"• 🟢 {s.start_time_str} – {s.end_time_str} ({dur_str}) — Світло є")
+    elif target_schedule.is_no_outages:
+        lines.append("• 🟢 00:00 – 24:00 (24 год) — Відключень немає")
+    elif target_schedule.is_emergency:
+        lines.append("• 🚨 Застосовано екстрені / аварійні відключення")
+    else:
+        lines.append("• ⏳ Графік ще не опубліковано Укренерго")
+
+    lines.append("")
+    notif_str = "УВІМК" if notifications_enabled else "ВИМК"
+    now_time_sec = now.strftime("%H:%M:%S")
+    lines.append(f"🔄 Оновлено: {now_time_sec} • 🔔 Сповіщення: {notif_str}")
+
+    return "\n".join(lines)
+

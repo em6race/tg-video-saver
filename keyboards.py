@@ -3,8 +3,17 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
 ALERT_REFRESH_COOLDOWN = 3   # Секунди кулдауну для ручного оновлення
 POWER_REFRESH_COOLDOWN = 3   # Секунди кулдауну для ручного оновлення графіка світла
 
-def get_outage_inline_keyboard(notifications_enabled: bool = True, view_day: str = "today") -> InlineKeyboardMarkup:
-    """Повертає інлайн-кнопки для графіка відключень світла (Yasno/DTEK)."""
+def get_outage_inline_keyboard() -> InlineKeyboardMarkup:
+    """Повертає мінімалістичні інлайн-кнопки для інфографіки графіка (лише Оновити та Меню)."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Оновити", callback_data="refresh_power_status"),
+            InlineKeyboardButton("⚙️ Меню", callback_data="open_power_menu")
+        ]
+    ])
+
+def get_outage_menu_keyboard(notifications_enabled: bool = True, notify_advance_30m: bool = True, view_day: str = "today") -> InlineKeyboardMarkup:
+    """Повертає розширене меню керування графіком відключень."""
     day_btn = (
         InlineKeyboardButton("📅 На завтра", callback_data="switch_power_day:tomorrow")
         if view_day == "today"
@@ -15,21 +24,32 @@ def get_outage_inline_keyboard(notifications_enabled: bool = True, view_day: str
         if notifications_enabled
         else InlineKeyboardButton("🔕 Сповіщення: ВИМК", callback_data="toggle_power_notif")
     )
+    advance_btn = (
+        InlineKeyboardButton("⏱ За 30 хв: УВІМК", callback_data="toggle_power_advance")
+        if notify_advance_30m
+        else InlineKeyboardButton("⏱ За 30 хв: ВИМК", callback_data="toggle_power_advance")
+    )
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🔄 Оновити", callback_data="refresh_power_status"),
-            day_btn
-        ],
-        [
-            notif_btn
-        ],
-        [
-            InlineKeyboardButton("⚙️ Змінити групу / адресу", callback_data="open_power_menu")
-        ],
-        [
-            InlineKeyboardButton("❌ Закрити", callback_data="close_power_card")
-        ]
+        [day_btn],
+        [notif_btn, advance_btn],
+        [InlineKeyboardButton("📍 Змінити чергу / адресу", callback_data="outage_setup_start")],
+        [InlineKeyboardButton("🌍 Змінити регіон / ДТЕК", callback_data="power_regions_list")],
+        [InlineKeyboardButton("🔙 До графіка", callback_data="refresh_power_status")]
     ])
+
+def get_coordinate_nudge_keyboard(lat: float, lon: float) -> InlineKeyboardMarkup:
+    """Повертає джойстик коригування координат (±50м)."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬆️ Північ (+50м)", callback_data=f"nudge_coords:n:{lat:.5f}:{lon:.5f}")],
+        [
+            InlineKeyboardButton("⬅️ Захід", callback_data=f"nudge_coords:w:{lat:.5f}:{lon:.5f}"),
+            InlineKeyboardButton("✅ Підтвердити", callback_data=f"confirm_coords:{lat:.5f}:{lon:.5f}"),
+            InlineKeyboardButton("➡️ Схід", callback_data=f"nudge_coords:e:{lat:.5f}:{lon:.5f}")
+        ],
+        [InlineKeyboardButton("⬇️ Південь (-50м)", callback_data=f"nudge_coords:s:{lat:.5f}:{lon:.5f}")],
+        [InlineKeyboardButton("🔙 Скасувати", callback_data="refresh_power_status")]
+    ])
+
 
 def get_alert_inline_keyboard(sound_enabled: bool = True, putin_enabled: bool = True) -> InlineKeyboardMarkup:
     """Повертає інлайн-кнопки швидкого ручного оновлення, карти, звуку та статусу путіна."""
@@ -72,6 +92,9 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton("⚙️ Налаштувати групу/адресу"),
                 KeyboardButton("❓ Довідка")
+            ],
+            [
+                KeyboardButton("📍 Надіслати мою геопозицію", request_location=True)
             ]
         ], resize_keyboard=True)
     elif alerts_on and not outages_on:
@@ -103,6 +126,7 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton("⚙️ Налаштувати групу/адресу")
             ],
             [
+                KeyboardButton("📍 Надіслати мою геопозицію", request_location=True),
                 KeyboardButton("❓ Довідка")
             ]
         ], resize_keyboard=True)

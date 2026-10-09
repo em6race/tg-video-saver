@@ -11,7 +11,13 @@ from database import (
     set_outage_last_msg_id,
     toggle_outage_notifications,
 )
-from yasno_outages import yasno_client, format_outage_card, DEFAULT_REGIONS
+from yasno_outages import (
+    yasno_client,
+    format_outage_card,
+    format_outage_caption,
+    generate_outage_card_image,
+    DEFAULT_REGIONS,
+)
 from keyboards import get_outage_inline_keyboard, get_main_reply_keyboard
 from handlers.common import check_access, delete_user_command_message
 from handlers.outages.state import _user_last_view_day
@@ -110,14 +116,12 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     address = sub.get("address")
     notif_enabled = sub.get("notifications_enabled", True)
 
-    status_msg = await update.effective_message.reply_text("⚡ Отримую графік відключень...")
-
     try:
         schedule = await yasno_client.get_group_schedule(region_id, dso_id, group)
         if not schedule:
-            await status_msg.edit_text(
+            await update.effective_message.reply_text(
                 f"❌ Не вдалося знайти групу **{group}** для **{region_name}** ({dso_name}).\n\n"
-                "Спробуйте обрати групу зі списку нижче або знайти за адресою:",
+                "Спробуйте обрати чергу зі списку або знайти за адресою:",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("⚙️ Налаштувати групу", callback_data="open_power_menu")]
                 ]),
@@ -125,22 +129,31 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             return
 
-        card_text = format_outage_card(
+        img_buf = generate_outage_card_image(
             group_schedule=schedule,
             region_name=region_name,
             dso_name=dso_name,
             address=address,
             view_day=view_day,
-            notifications_enabled=notif_enabled
         )
+        caption = format_outage_caption(
+            group_schedule=schedule,
+            view_day=view_day,
+            notifications_enabled=notif_enabled,
+        )
+        kb = get_outage_inline_keyboard()
 
-        kb = get_outage_inline_keyboard(notifications_enabled=notif_enabled, view_day=view_day)
-        await status_msg.edit_text(card_text, reply_markup=kb, parse_mode="Markdown")
-        await set_outage_last_msg_id(user_id, status_msg.message_id)
+        sent_msg = await update.effective_message.reply_photo(
+            photo=img_buf.getvalue(),
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        await set_outage_last_msg_id(user_id, sent_msg.message_id)
 
     except Exception as e:
         logger.error(f"Error fetching outages for user {user_id}: {e}", exc_info=True)
-        await status_msg.edit_text(
+        await update.effective_message.reply_text(
             f"❌ Не вдалося завантажити графік: `{e}`\n"
             "Спробуйте оновити пізніше або змінити групу.",
             reply_markup=InlineKeyboardMarkup([

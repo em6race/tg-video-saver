@@ -606,6 +606,28 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await power_command(update, context)
             return
 
+        # Якщо користувач надіслав координати вручну (наприклад: 50.4501, 30.5234)
+        coords_match = re.fullmatch(r"^(-?\d{1,2}\.\d+)[,\s]+(-?\d{1,3}\.\d+)$", text)
+        if coords_match:
+            lat = float(coords_match.group(1))
+            lon = float(coords_match.group(2))
+            from yasno_outages import resolve_group_from_coords
+            from keyboards import get_coordinate_nudge_keyboard
+            reg_id = outage_sub.get("region_id", 25) if outage_sub else 25
+            dso_id = outage_sub.get("dso_id", 902) if outage_sub else 902
+            status_msg = await update.message.reply_text("⏳ Визначаю чергу за координатами...")
+            group, addr, err = await resolve_group_from_coords(lat, lon, reg_id, dso_id)
+            nudge_text = (
+                "📍 **Визначення адреси за координатами**\n\n"
+                f"• Координати: `{lat:.5f}, {lon:.5f}`\n"
+                f"• Адреса: **{addr or 'Не визначено'}**\n"
+                f"• Знайдена черга: **{group or 'Не визначено'}**\n\n"
+                "Використовуйте кнопки для коригування або натисніть Підтвердити:"
+            )
+            kb = get_coordinate_nudge_keyboard(lat, lon)
+            await status_msg.edit_text(nudge_text, reply_markup=kb, parse_mode="Markdown")
+            return
+
         # Якщо бот очікує назву вулиці
         if awaiting == "search_street" or (not is_alerts_plugin_enabled() and not is_media_plugin_enabled() and len(text) <= 60 and not text.startswith("http")):
             reg_id = outage_sub.get("region_id", 25) if outage_sub else 25

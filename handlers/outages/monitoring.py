@@ -80,27 +80,30 @@ async def outages_monitoring_loop(application: Application) -> None:
                     await update_outage_schedule_hash(user_id, current_hash)
 
                     from yasno_outages.models import GroupSchedule
+                    from yasno_outages.image_generator import generate_outage_card_image
+                    from yasno_outages.formatter import format_outage_caption
+
                     group_sched = GroupSchedule(
                         group=group, region_id=region_id, dso_id=dso_id,
                         today=today_sched, tomorrow=tomorrow_sched
                     )
-                    card_text = format_outage_card(
+                    img_buf = generate_outage_card_image(
                         group_schedule=group_sched,
                         region_name=region_name,
                         dso_name=dso_name,
                         address=address,
                         view_day="today",
-                        notifications_enabled=True
                     )
-                    alert_text = (
-                        f"⚠️ **Увага! Графік відключень для групи {group} оновлено!**\n\n"
-                        f"{card_text}"
+                    caption = (
+                        "⚠️ **Увага! Графік відключень оновлено!**\n\n"
+                        + format_outage_caption(group_sched, view_day="today", notifications_enabled=True)
                     )
-                    kb = get_outage_inline_keyboard(notifications_enabled=True, view_day="today")
+                    kb = get_outage_inline_keyboard()
                     try:
-                        sent = await application.bot.send_message(
+                        sent = await application.bot.send_photo(
                             chat_id=chat_id,
-                            text=alert_text,
+                            photo=img_buf.getvalue(),
+                            caption=caption,
                             reply_markup=kb,
                             parse_mode="Markdown"
                         )
@@ -113,7 +116,8 @@ async def outages_monitoring_loop(application: Application) -> None:
                     await update_outage_schedule_hash(user_id, current_hash)
 
                 # 2. Попередження за 20-35 хвилин до відключення
-                if today_sched.slots:
+                adv_enabled = sub.get("notify_advance_30m", True)
+                if adv_enabled and today_sched.slots:
                     for slot in today_sched.slots:
                         if slot.slot_type == "Definite":
                             mins_until = slot.start - now_minute
