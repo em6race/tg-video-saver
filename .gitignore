@@ -4,5 +4,7 @@ __pycache__/
 *.pyc
 cache.db
 cache.db-journal
+*.db
+*.db-journal
 downloads/
 *.png

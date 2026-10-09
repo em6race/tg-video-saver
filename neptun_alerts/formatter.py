@@ -39,6 +39,44 @@ CUSTOM_EMOJIS = {
     "air_defense_gepard": ("5287674730780835511", "⚡"),   # Gepard зенітка
 }
 
+# Варіанти відповідей на питання «Чи здох путін?», які щодня змінюються за календарем
+PUTIN_STATUS_PHRASES = [
+    "На жаль, ще ні. Але холодильник уже чекає. 🧊",
+    "Ще ні, але Кобзон уже розспівується. 🎤",
+    "На жаль, ні. Але лікарі бункера щодня нервують. 💊",
+    "Поки що ні, але ЗСУ наближають цей день 24/7. 🇺🇦",
+    "На жаль, ще ні. Але хробаки вже забронювали столики. 🪱",
+    "Поки дихає, але чорний пакет уже випрасувано. ⬛",
+    "На жаль, ні. Пекло все ще розширює VIP-зону. 🔥",
+    "Ще ні, але дні бункерного щура полічені. 🐀",
+    "На жаль, ще ні. Тримаємо стрій і донатимо на бавовну! 💥",
+    "Поки ні, але в Гаазі вже провітрюють камеру. ⚖️",
+    "На жаль, ще ні. Але зворотний відлік невблаганно триває. ⌛",
+    "Ще ні, але українська земля вже чекає на добриво. 🌱",
+    "На жаль, ще ні. Але свято обов'язково буде всенародним! 🎉",
+    "Поки ні, але навіть у кремлівських коридорах уже шепочуться. 🤫",
+    "На жаль, ні. Але кожен наш донат на ЗСУ це виправляє! 🎯",
+    "Поки ні, але квиток на концерт Кобзона вже в першому ряду. 🎟️",
+    "На жаль, ще ні. Але ранок з шампанським все ближче! 🥂",
+    "Поки тримається за стіл, але пальці вже німіють. 🪵",
+    "На жаль, ще ні. Але доля диктаторів завжди однакова. ⚡",
+    "Ще ні, але черга в пекло вже рухається швидше. 🚪",
+    "На жаль, ні. Бункерний дід усе ще псує повітря на планеті. 🌍",
+    "Поки ні, але земля під його ногами вже горить. 🔥",
+    "На жаль, ще ні. Але вічність уже приготувала йому казан. 🍲",
+    "Ще ні, але шампанське в українців уже охолоджується! 🍾",
+]
+
+def get_daily_putin_phrase(target_date=None) -> str:
+    """Повертає різноманітну відповідь на питання 'Чи здох путін?', яка автоматично змінюється раз на добу."""
+    if target_date is None:
+        target_date = datetime.now(pytz.timezone("Europe/Kiev")).date()
+    elif isinstance(target_date, datetime):
+        target_date = target_date.date()
+    
+    idx = target_date.toordinal() % len(PUTIN_STATUS_PHRASES)
+    return PUTIN_STATUS_PHRASES[idx]
+
 def e(key: str) -> str:
     """Повертає HTML-тег <tg-emoji> для кастомного емодзі з fallback-значенням."""
     item = CUSTOM_EMOJIS.get(key)
@@ -294,8 +332,10 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
 
     putin_enabled = sub.get("putin_check_enabled", True) if sub else True
     if putin_enabled:
-        kyiv_today = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%d.%m.%Y")
-        lines.append(f"\n☠️ <i>{kyiv_today}. Чи здох путін? — На жаль, ще ні.</i>")
+        kyiv_now = datetime.now(pytz.timezone("Europe/Kiev"))
+        kyiv_today = kyiv_now.strftime("%d.%m.%Y")
+        putin_phrase = get_daily_putin_phrase(kyiv_now)
+        lines.append(f"\n☠️ <i>{kyiv_today}. Чи здох путін? — {putin_phrase}</i>")
 
     now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
     lines.append(f"\n⏱ <b>Оновлено:</b> {now_tz} | <a href=\"https://neptun.in.ua/\">NEPTUN Map</a>")

@@ -19,6 +19,7 @@ from neptun_alerts import (
     format_alert_message,
     make_threat_signature,
     generate_alerts_map_image,
+    get_daily_putin_phrase,
 )
 from keyboards import (
     get_alert_inline_keyboard,
@@ -340,13 +341,16 @@ async def putin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     putin_enabled = sub.get("putin_check_enabled", True) if sub else True
 
     tz = pytz.timezone("Europe/Kiev")
-    kyiv_today = datetime.now(tz).strftime("%d.%m.%Y")
+    kyiv_now = datetime.now(tz)
+    kyiv_today = kyiv_now.strftime("%d.%m.%Y")
+    daily_phrase = get_daily_putin_phrase(kyiv_now)
+
     status_text = (
         f"☠️ <b>{kyiv_today}. Чи здох путін?</b>\n"
-        "<b>На жаль, ще ні.</b> ⏳\n\n"
+        f"<b>{daily_phrase}</b>\n\n"
         "• ЗСУ та сили оборони працюють над цим 24/7 🇺🇦\n"
         "• Бавовна неминуча 🔥\n\n"
-        "💡 <i>Цей статус також оновлюється щодня прямо у вашій картці тривог (/status). "
+        "💡 <i>Цей статус також змінюється щодня прямо у вашій картці тривог (/status). "
         "Його можна увімкнути або вимкнути кнопкою «☠️ Путін» під карткою.</i>"
     )
     toggle_btn = (
