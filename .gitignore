@@ -8,3 +8,5 @@ cache.db-journal
 *.db-journal
 downloads/
 *.png
+graphify-out/
+
