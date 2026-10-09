@@ -1,4 +1,5 @@
 import html
+import random
 from datetime import datetime
 import pytz
 
@@ -50,14 +51,34 @@ PUTIN_STATUS_PHRASES = [
 ]
 
 def get_daily_putin_phrase(target_date=None) -> str:
-    """Повертає різноманітну відповідь на питання 'Чи здох путін?', яка автоматично змінюється раз на добу."""
+    """Повертає щоденну випадкову відповідь на питання 'Чи здох путін?' (рандомний порядок без повторень два дні поспіль)."""
     if target_date is None:
         target_date = datetime.now(pytz.timezone("Europe/Kiev")).date()
     elif isinstance(target_date, datetime):
         target_date = target_date.date()
     
-    idx = target_date.toordinal() % len(PUTIN_STATUS_PHRASES)
-    return PUTIN_STATUS_PHRASES[idx]
+    ord_val = target_date.toordinal()
+    block_size = len(PUTIN_STATUS_PHRASES)
+    if block_size == 0:
+        return "На жаль, ще ні."
+    if block_size == 1:
+        return PUTIN_STATUS_PHRASES[0]
+
+    block_id = ord_val // block_size
+    offset = ord_val % block_size
+    
+    rng = random.Random(f"putin_rnd_block_{block_id}")
+    shuffled = list(PUTIN_STATUS_PHRASES)
+    rng.shuffle(shuffled)
+    
+    # Уникаємо повторення однакової фрази на стику двох блоків
+    prev_rng = random.Random(f"putin_rnd_block_{block_id - 1}")
+    prev_shuffled = list(PUTIN_STATUS_PHRASES)
+    prev_rng.shuffle(prev_shuffled)
+    if shuffled[0] == prev_shuffled[-1] and len(shuffled) > 1:
+        shuffled[0], shuffled[1] = shuffled[1], shuffled[0]
+        
+    return shuffled[offset]
 
 def e(key: str) -> str:
     """Повертає HTML-тег <tg-emoji> для кастомного емодзі з fallback-значенням."""
