@@ -4,7 +4,7 @@ ALERT_REFRESH_COOLDOWN = 3   # Секунди кулдауну для ручно
 POWER_REFRESH_COOLDOWN = 3   # Секунди кулдауну для ручного оновлення графіка світла
 
 def get_outage_inline_keyboard(view_day: str = "today") -> InlineKeyboardMarkup:
-    """Повертає 3 інлайн-кнопки для інфографіки графіка: Оновити, На завтра (або На сьогодні) та Меню."""
+    """Повертає інлайн-кнопки для інфографіки: два кнопки вгорі (Оновити, На завтра) та Меню внизу."""
     day_btn = (
         InlineKeyboardButton("📅 На завтра", callback_data="switch_power_day:tomorrow")
         if view_day == "today"
@@ -13,7 +13,9 @@ def get_outage_inline_keyboard(view_day: str = "today") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🔄 Оновити", callback_data="refresh_power_status"),
-            day_btn,
+            day_btn
+        ],
+        [
             InlineKeyboardButton("⚙️ Меню", callback_data="open_power_menu")
         ]
     ])
