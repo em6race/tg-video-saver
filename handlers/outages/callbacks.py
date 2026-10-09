@@ -290,48 +290,69 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
         if not curr_reg:
             await set_outage_awaiting(user_id, chat_id, "search_city")
             setup_text = (
-                "📍 **Крок 1 з 3: Вкажіть населений пункт**\n\n"
-                "Напишіть у чат назву вашого міста чи села (наприклад: `Київ`, `Дніпро`, `Кам'янське`, `Нікополь`, `Павлоград` тощо):\n\n"
+                "📍 **Крок 1: Вкажіть ваш населений пункт або область**\n\n"
+                "Бот підтримує розклади відключень для **всіх областей України** 🇺🇦.\n\n"
+                "Напишіть у чат назву вашого міста чи села (наприклад: `Львів`, `Київ`, `Одеса`, `Полтава`, `Харків`, `Черкаси` тощо):\n\n"
                 "💡 *Або оберіть зі швидких кнопок нижче:*"
             )
             buttons = [
                 [
-                    InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:Київ:ДТЕК Київські електромережі:0:Київ"),
+                    InlineKeyboardButton("🗺️ Оберіть область зі списку (Вся Україна)", callback_data="power_regions_list"),
                 ],
                 [
-                    InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
-                    InlineKeyboardButton("🏙️ Дніпро (ЦЕК)", callback_data="power_set_city:3:303:Дніпро:ЦЕК:6:Дніпро"),
+                    InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:м. Київ:ДТЕК Київські електромережі:0:Київ"),
+                    InlineKeyboardButton("🏙️ Львів", callback_data="power_sel_reg:46:Львівська область"),
                 ],
                 [
-                    InlineKeyboardButton("🗺️ Список всіх областей", callback_data="power_regions_list"),
+                    InlineKeyboardButton("🏙️ Одеса", callback_data="power_sel_reg:51:Одеська область"),
+                    InlineKeyboardButton("🏙️ Дніпро", callback_data="power_set_city:3:301:Дніпропетровська область:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
+                ],
+                [
+                    InlineKeyboardButton("🏙️ Харків", callback_data="power_sel_reg:63:Харківська область"),
+                    InlineKeyboardButton("🏙️ Полтава", callback_data="power_sel_reg:53:Полтавська область"),
+                ],
+                [
                     InlineKeyboardButton("🔙 До меню", callback_data="open_power_menu"),
                 ]
             ]
         else:
             setup_text = (
                 f"📍 **Налаштування черги ({curr_reg})**\n\n"
-                "Оберіть вашу чергу (групу) зі швидких кнопок нижче, "
-                "знайдіть за адресою або змініть місто:"
+                "Оберіть вашу чергу (групу) зі списку нижче або змініть область:"
             )
             buttons = [
                 [
-                    InlineKeyboardButton("1️⃣ Група 1", callback_data="power_quick_group:1.1"),
-                    InlineKeyboardButton("2️⃣ Група 2", callback_data="power_quick_group:2.1"),
-                    InlineKeyboardButton("3️⃣ Група 3", callback_data="power_quick_group:3.1"),
+                    InlineKeyboardButton("1️⃣ Черга 1.1", callback_data="power_quick_group:1.1"),
+                    InlineKeyboardButton("1️⃣ Черга 1.2", callback_data="power_quick_group:1.2"),
                 ],
                 [
-                    InlineKeyboardButton("4️⃣ Група 4", callback_data="power_quick_group:4.1"),
-                    InlineKeyboardButton("5️⃣ Група 5", callback_data="power_quick_group:5.1"),
-                    InlineKeyboardButton("6️⃣ Група 6", callback_data="power_quick_group:6.1"),
+                    InlineKeyboardButton("2️⃣ Черга 2.1", callback_data="power_quick_group:2.1"),
+                    InlineKeyboardButton("2️⃣ Черга 2.2", callback_data="power_quick_group:2.2"),
                 ],
                 [
-                    InlineKeyboardButton("🔍 Пошук за адресою", callback_data="power_search_address"),
-                    InlineKeyboardButton("🗺️ Змінити місто / регіон", callback_data="power_search_address"),
+                    InlineKeyboardButton("3️⃣ Черга 3.1", callback_data="power_quick_group:3.1"),
+                    InlineKeyboardButton("3️⃣ Черга 3.2", callback_data="power_quick_group:3.2"),
                 ],
                 [
-                    InlineKeyboardButton("🔙 Назад до меню", callback_data="open_power_menu")
-                ]
+                    InlineKeyboardButton("4️⃣ Черга 4.1", callback_data="power_quick_group:4.1"),
+                    InlineKeyboardButton("4️⃣ Черга 4.2", callback_data="power_quick_group:4.2"),
+                ],
+                [
+                    InlineKeyboardButton("5️⃣ Черга 5.1", callback_data="power_quick_group:5.1"),
+                    InlineKeyboardButton("5️⃣ Черга 5.2", callback_data="power_quick_group:5.2"),
+                ],
+                [
+                    InlineKeyboardButton("6️⃣ Черга 6.1", callback_data="power_quick_group:6.1"),
+                    InlineKeyboardButton("6️⃣ Черга 6.2", callback_data="power_quick_group:6.2"),
+                ],
+                [
+                    InlineKeyboardButton("🗺️ Змінити область / місто", callback_data="power_regions_list"),
+                ],
             ]
+            r_id = sub.get("region_id") if sub else None
+            if r_id in (25, 3):
+                buttons.append([InlineKeyboardButton("🔍 Пошук черги за адресою", callback_data="power_search_address")])
+            buttons.append([InlineKeyboardButton("🔙 Назад до меню", callback_data="open_power_menu")])
         if query.message.photo:
             try:
                 await query.edit_message_caption(caption=setup_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
@@ -412,13 +433,20 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
         await query.answer()
         regions = await yasno_client.get_regions()
         buttons = []
+        row = []
         for r in regions:
-            r_name = r.get("value") or r.get("name")
+            r_name = r.get("short_name") or r.get("name")
+            full_name = r.get("name") or r_name
             r_id = r.get("id")
-            buttons.append([InlineKeyboardButton(f"📍 {r_name}", callback_data=f"power_sel_reg:{r_id}:{r_name}")])
+            row.append(InlineKeyboardButton(f"📍 {r_name}", callback_data=f"power_sel_reg:{r_id}:{full_name}"))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
         buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="open_power_menu")])
 
-        reg_text = "🗺️ **Оберіть ваш регіон / область:**"
+        reg_text = "🗺️ **Оберіть вашу область / регіон України:**"
         if query.message.photo:
             try:
                 await query.edit_message_caption(caption=reg_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
@@ -456,18 +484,34 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
             )
             buttons = [
                 [
-                    InlineKeyboardButton("1️⃣ Група 1", callback_data="power_quick_group:1.1"),
-                    InlineKeyboardButton("2️⃣ Група 2", callback_data="power_quick_group:2.1"),
-                    InlineKeyboardButton("3️⃣ Група 3", callback_data="power_quick_group:3.1"),
+                    InlineKeyboardButton("1️⃣ Черга 1.1", callback_data="power_quick_group:1.1"),
+                    InlineKeyboardButton("1️⃣ Черга 1.2", callback_data="power_quick_group:1.2"),
                 ],
                 [
-                    InlineKeyboardButton("4️⃣ Група 4", callback_data="power_quick_group:4.1"),
-                    InlineKeyboardButton("5️⃣ Група 5", callback_data="power_quick_group:5.1"),
-                    InlineKeyboardButton("6️⃣ Група 6", callback_data="power_quick_group:6.1"),
+                    InlineKeyboardButton("2️⃣ Черга 2.1", callback_data="power_quick_group:2.1"),
+                    InlineKeyboardButton("2️⃣ Черга 2.2", callback_data="power_quick_group:2.2"),
                 ],
-                [InlineKeyboardButton("🔍 Пошук за адресою", callback_data="power_search_address")],
-                [InlineKeyboardButton("⬅️ В меню", callback_data="open_power_menu")],
+                [
+                    InlineKeyboardButton("3️⃣ Черга 3.1", callback_data="power_quick_group:3.1"),
+                    InlineKeyboardButton("3️⃣ Черга 3.2", callback_data="power_quick_group:3.2"),
+                ],
+                [
+                    InlineKeyboardButton("4️⃣ Черга 4.1", callback_data="power_quick_group:4.1"),
+                    InlineKeyboardButton("4️⃣ Черга 4.2", callback_data="power_quick_group:4.2"),
+                ],
+                [
+                    InlineKeyboardButton("5️⃣ Черга 5.1", callback_data="power_quick_group:5.1"),
+                    InlineKeyboardButton("5️⃣ Черга 5.2", callback_data="power_quick_group:5.2"),
+                ],
+                [
+                    InlineKeyboardButton("6️⃣ Черга 6.1", callback_data="power_quick_group:6.1"),
+                    InlineKeyboardButton("6️⃣ Черга 6.2", callback_data="power_quick_group:6.2"),
+                ],
             ]
+            if r_id in (25, 3):
+                buttons.append([InlineKeyboardButton("🔍 Пошук черги за адресою", callback_data="power_search_address")])
+            buttons.append([InlineKeyboardButton("⬅️ До списку областей", callback_data="power_regions_list")])
+            buttons.append([InlineKeyboardButton("🏠 В меню", callback_data="open_power_menu")])
             txt = f"✅ Обрано регіон **{r_name}** ({d_name}).\nТепер оберіть вашу чергу (групу):"
             if query.message.photo:
                 try:
@@ -491,25 +535,93 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
                 await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
         return True
 
+    # 8b. Вибір оператора DSO
+    elif choice.startswith("power_sel_dso:"):
+        await query.answer()
+        parts = choice.split(":")
+        r_id = int(parts[1])
+        r_name = parts[2]
+        d_id = int(parts[3])
+        d_name = parts[4]
+
+        sub = await get_outage_subscription(user_id)
+        curr_grp = sub.get("group_name", "1.1") if sub else "1.1"
+        await save_outage_group(
+            user_id=user_id,
+            chat_id=chat_id,
+            region_id=r_id,
+            region_name=r_name,
+            dso_id=d_id,
+            dso_name=d_name,
+            group_name=curr_grp,
+        )
+        buttons = [
+            [
+                InlineKeyboardButton("1️⃣ Черга 1.1", callback_data="power_quick_group:1.1"),
+                InlineKeyboardButton("1️⃣ Черга 1.2", callback_data="power_quick_group:1.2"),
+            ],
+            [
+                InlineKeyboardButton("2️⃣ Черга 2.1", callback_data="power_quick_group:2.1"),
+                InlineKeyboardButton("2️⃣ Черга 2.2", callback_data="power_quick_group:2.2"),
+            ],
+            [
+                InlineKeyboardButton("3️⃣ Черга 3.1", callback_data="power_quick_group:3.1"),
+                InlineKeyboardButton("3️⃣ Черга 3.2", callback_data="power_quick_group:3.2"),
+            ],
+            [
+                InlineKeyboardButton("4️⃣ Черга 4.1", callback_data="power_quick_group:4.1"),
+                InlineKeyboardButton("4️⃣ Черга 4.2", callback_data="power_quick_group:4.2"),
+            ],
+            [
+                InlineKeyboardButton("5️⃣ Черга 5.1", callback_data="power_quick_group:5.1"),
+                InlineKeyboardButton("5️⃣ Черга 5.2", callback_data="power_quick_group:5.2"),
+            ],
+            [
+                InlineKeyboardButton("6️⃣ Черга 6.1", callback_data="power_quick_group:6.1"),
+                InlineKeyboardButton("6️⃣ Черга 6.2", callback_data="power_quick_group:6.2"),
+            ],
+        ]
+        if r_id in (25, 3):
+            buttons.append([InlineKeyboardButton("🔍 Пошук черги за адресою", callback_data="power_search_address")])
+        buttons.append([InlineKeyboardButton("⬅️ До списку областей", callback_data="power_regions_list")])
+        buttons.append([InlineKeyboardButton("🏠 В меню", callback_data="open_power_menu")])
+        txt = f"✅ Обрано **{r_name}** ({d_name}).\nТепер оберіть вашу чергу (групу):"
+        if query.message.photo:
+            try:
+                await query.edit_message_caption(caption=txt, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+            except Exception:
+                pass
+        else:
+            await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+        return True
+
     # 9. Пошук за адресою (Крок 1: Населений пункт)
     elif choice == "power_search_address":
         await query.answer()
         await set_outage_awaiting(user_id, chat_id, "search_city")
         msg_text = (
-            "📍 **Крок 1 з 3: Вкажіть населений пункт**\n\n"
-            "Напишіть у чат назву вашого міста чи села (наприклад: `Київ`, `Дніпро`, `Кам'янське`, `Нікополь`, `Павлоград` тощо):\n\n"
-            "💡 *Або оберіть зі швидких кнопок нижче:*"
+            "📍 **Крок 1: Вкажіть ваш населений пункт або область**\n\n"
+            "Бот підтримує розклади відключень для **всіх областей України** 🇺🇦.\n\n"
+            "Напишіть у чат назву вашого міста чи села (наприклад: `Львів`, `Київ`, `Одеса`, `Полтава`, `Черкаси` тощо):\n\n"
+            "💡 *Або оберіть область зі списку чи швидких кнопок нижче:*"
         )
         buttons = [
             [
-                InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:Київ:ДТЕК Київські електромережі:0:Київ"),
+                InlineKeyboardButton("🗺️ Список всіх 24 областей України", callback_data="power_regions_list"),
             ],
             [
-                InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
-                InlineKeyboardButton("🏙️ Дніпро (ЦЕК)", callback_data="power_set_city:3:303:Дніпро:ЦЕК:6:Дніпро"),
+                InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:м. Київ:ДТЕК Київські електромережі:0:Київ"),
+                InlineKeyboardButton("🏙️ Львів", callback_data="power_sel_reg:46:Львівська область"),
             ],
             [
-                InlineKeyboardButton("🗺️ Список всіх областей", callback_data="power_regions_list"),
+                InlineKeyboardButton("🏙️ Одеса", callback_data="power_sel_reg:51:Одеська область"),
+                InlineKeyboardButton("🏙️ Дніпро", callback_data="power_sel_reg:3:Дніпропетровська область"),
+            ],
+            [
+                InlineKeyboardButton("🏙️ Харків", callback_data="power_sel_reg:63:Харківська область"),
+                InlineKeyboardButton("🏙️ Полтава", callback_data="power_sel_reg:53:Полтавська область"),
+            ],
+            [
                 InlineKeyboardButton("⬅️ Назад в меню", callback_data="open_power_menu"),
             ]
         ]

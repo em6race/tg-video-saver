@@ -33,22 +33,29 @@ async def prompt_group_setup(update: Update, context: ContextTypes.DEFAULT_TYPE,
     msg_text = (
         f"{prefix_msg}"
         "⚡ **Налаштування графіка відключень світла**\n\n"
-        "Вкажіть вашу адресу, щоб бот визначив чергу (групу) та показував актуальний розклад:\n\n"
-        "📍 **Крок 1 з 3: Населений пункт**\n"
-        "Напишіть у чат назву вашого міста чи села (наприклад: `Київ`, `Дніпро`, `Кам'янське`, `Нікополь`, `Павлоград` тощо)\n\n"
-        "💡 *Або оберіть зі швидких кнопок нижче:*"
+        "Бот підтримує розклади відключень для **всіх областей України** 🇺🇦.\n\n"
+        "📍 **Крок 1: Населений пункт або область**\n"
+        "Напишіть у чат назву вашого міста чи села (наприклад: `Львів`, `Київ`, `Одеса`, `Полтава`, `Черкаси` тощо)\n\n"
+        "💡 *Або оберіть вашу область зі списку нижче:*"
     )
 
     keyboard = [
         [
-            InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:Київ:ДТЕК Київські електромережі:0:Київ"),
+            InlineKeyboardButton("🗺️ Список всіх 24 областей України", callback_data="power_regions_list"),
         ],
         [
-            InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпро:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
-            InlineKeyboardButton("🏙️ Дніпро (ЦЕК)", callback_data="power_set_city:3:303:Дніпро:ЦЕК:6:Дніпро"),
+            InlineKeyboardButton("🏙️ Київ", callback_data="power_set_city:25:902:м. Київ:ДТЕК Київські електромережі:0:Київ"),
+            InlineKeyboardButton("🏙️ Львів", callback_data="power_sel_reg:46:Львівська область"),
         ],
         [
-            InlineKeyboardButton("🗺️ Список всіх областей", callback_data="power_regions_list"),
+            InlineKeyboardButton("🏙️ Одеса", callback_data="power_sel_reg:51:Одеська область"),
+            InlineKeyboardButton("🏙️ Дніпро", callback_data="power_sel_reg:3:Дніпропетровська область"),
+        ],
+        [
+            InlineKeyboardButton("🏙️ Харків", callback_data="power_sel_reg:63:Харківська область"),
+            InlineKeyboardButton("🏙️ Полтава", callback_data="power_sel_reg:53:Полтавська область"),
+        ],
+        [
             InlineKeyboardButton("❌ Закрити", callback_data="close_power_card")
         ]
     ]

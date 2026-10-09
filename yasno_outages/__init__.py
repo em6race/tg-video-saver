@@ -26,6 +26,7 @@ from yasno_outages.geocoding import (
     reverse_coords_to_address,
     nudge_coords,
     resolve_group_from_coords,
+    find_ukrainian_settlement,
 )
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "reverse_coords_to_address",
     "nudge_coords",
     "resolve_group_from_coords",
+    "find_ukrainian_settlement",
     "get_current_kyiv_time",
     "get_current_state_and_countdown",
     "generate_visual_timeline",
