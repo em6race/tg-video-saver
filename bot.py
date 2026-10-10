@@ -19,8 +19,8 @@ from handlers.common import (
     is_media_plugin_enabled,
     is_alerts_plugin_enabled,
 )
+from handlers.start import start
 from handlers.admin import (
-    start,
     invite_command,
     invites_list_command,
     clear_invites_command,
