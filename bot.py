@@ -11,6 +11,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from handlers.common import (
     myid_command,
@@ -105,7 +106,21 @@ def main() -> None:
                 logger.warning(f"Failed to clean up downloads directory on startup: {e}")
         os.makedirs(downloads_dir, exist_ok=True)
 
-    application = Application.builder().token(TOKEN).post_init(post_init).build()
+    request = HTTPXRequest(
+        connection_pool_size=8,
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0,
+    )
+
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .request(request)
+        .post_init(post_init)
+        .build()
+    )
 
     # Реєстрація централізованого обробника помилок
     application.add_error_handler(error_handler)
@@ -144,7 +159,11 @@ def main() -> None:
     # Загальний обробник текстових повідомлень (кнопки меню та пошук міста)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown))
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        bootstrap_retries=10,
+        timeout=20,
+    )
 
 if __name__ == "__main__":
     main()
