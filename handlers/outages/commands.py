@@ -9,6 +9,8 @@ from database import (
     save_outage_group,
     set_outage_awaiting,
     set_outage_last_msg_id,
+    set_outage_menu_msg_id,
+    clear_outage_menu_msg_id,
     toggle_outage_notifications,
 )
 from yasno_outages import (
@@ -24,24 +26,128 @@ from handlers.outages.state import _user_last_view_day
 
 logger = logging.getLogger(__name__)
 
-async def cleanup_previous_outage_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> None:
-    """Видаляє попереднє повідомлення розкладу або налаштування, щоб уникнути дублювання."""
+async def cleanup_previous_outage_message(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    user_id: int,
+    delete_card: bool = True,
+    delete_menu: bool = True,
+    extra_msg_id: int = None,
+) -> None:
+    """Видаляє попередні повідомлення (картку та/або меню), щоб чат не засмічувався."""
     try:
         sub = await get_outage_subscription(user_id)
-        if sub and sub.get("last_msg_id"):
+        to_delete = set()
+        if extra_msg_id:
+            to_delete.add(extra_msg_id)
+        if sub:
+            if delete_card and sub.get("last_msg_id"):
+                to_delete.add(sub["last_msg_id"])
+            if delete_menu and sub.get("last_menu_msg_id"):
+                to_delete.add(sub["last_menu_msg_id"])
+
+        for mid in to_delete:
             try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_msg_id"])
+                await context.bot.delete_message(chat_id=chat_id, message_id=mid)
             except Exception:
                 pass
-    except Exception:
-        pass
+
+        if delete_menu:
+            await clear_outage_menu_msg_id(user_id)
+    except Exception as e:
+        logger.debug(f"cleanup_previous_outage_message error: {e}")
+
+async def repost_outage_card_to_bottom(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    user_id: int,
+    view_day: str = None,
+    extra_msg_id: int = None,
+) -> None:
+    """
+    Видаляє старе меню та попередню картку, і надсилає актуальний графік
+    насамкінець чату (як головний екран). Залишає рівно 1 повідомлення в чаті!
+    """
+    sub = await get_outage_subscription(user_id)
+    if not sub or not sub.get("group_name") or sub.get("group_name") == "None":
+        return
+
+    # Видаляємо старе меню та попередню картку
+    await cleanup_previous_outage_message(
+        context, chat_id, user_id, delete_card=True, delete_menu=True, extra_msg_id=extra_msg_id
+    )
+
+    if view_day is None:
+        view_day = _user_last_view_day.get(user_id, "today")
+    else:
+        _user_last_view_day[user_id] = view_day
+
+    region_id = sub.get("region_id") or 25
+    dso_id = sub.get("dso_id") or 902
+    group = sub.get("group_name")
+    region_name = sub.get("city_name") or sub.get("region_name") or "Київ"
+    dso_name = sub.get("dso_name") or "ДТЕК"
+    address = sub.get("address")
+    notif_enabled = sub.get("notifications_enabled", True)
+
+    try:
+        schedule = await yasno_client.get_group_schedule(region_id, dso_id, group)
+        if not schedule:
+            sent_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ Не вдалося знайти групу **{group}** для **{region_name}** ({dso_name}).\n\n"
+                     "Спробуйте обрати чергу зі списку або знайти за адресою:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⚙️ Налаштувати групу", callback_data="open_power_menu")]
+                ]),
+                parse_mode="Markdown"
+            )
+            await set_outage_menu_msg_id(user_id, sent_msg.message_id)
+            return
+
+        img_buf = generate_outage_card_image(
+            group_schedule=schedule,
+            region_name=region_name,
+            dso_name=dso_name,
+            address=address,
+            view_day=view_day,
+        )
+        caption = format_outage_caption(
+            group_schedule=schedule,
+            view_day=view_day,
+            notifications_enabled=notif_enabled,
+        )
+        kb = get_outage_inline_keyboard(view_day=view_day)
+
+        sent_msg = await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=img_buf.getvalue(),
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        await set_outage_last_msg_id(user_id, sent_msg.message_id)
+    except Exception as e:
+        logger.error(f"Error fetching outages for user {user_id}: {e}", exc_info=True)
+        sent_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Не вдалося завантажити графік: `{e}`\n"
+                 "Спробуйте оновити пізніше або змінити групу.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Спробувати знову", callback_data="refresh_power_status")],
+                [InlineKeyboardButton("⚙️ Змінити групу", callback_data="open_power_menu")]
+            ]),
+            parse_mode="Markdown"
+        )
+        await set_outage_menu_msg_id(user_id, sent_msg.message_id)
 
 async def prompt_group_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_msg: str = "") -> None:
     """Prompts the user to select their settlement, region, or search by address."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     await delete_user_command_message(update)
-    await cleanup_previous_outage_message(context, chat_id, user_id)
+    # Очищуємо старе меню (але картку не чіпаємо, якщо вона є)
+    await cleanup_previous_outage_message(context, chat_id, user_id, delete_card=False, delete_menu=True)
     await set_outage_awaiting(user_id, chat_id, "search_city")
 
     msg_text = (
@@ -79,7 +185,7 @@ async def prompt_group_setup(update: Update, context: ContextTypes.DEFAULT_TYPE,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
-    await set_outage_last_msg_id(user_id, sent_msg.message_id)
+    await set_outage_menu_msg_id(user_id, sent_msg.message_id)
 
 async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Головна команда /power або /svitlo: відображає інтерактивний екран стану світла."""
@@ -106,65 +212,7 @@ async def power_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await prompt_group_setup(update, context)
         return
 
-    await cleanup_previous_outage_message(context, chat_id, user_id)
-
-    view_day = _user_last_view_day.get(user_id, "today")
-    region_id = sub.get("region_id")
-    dso_id = sub.get("dso_id")
-    group = sub.get("group_name")
-    region_name = sub.get("city_name") or sub.get("region_name") or "Регіон"
-    dso_name = sub.get("dso_name") or "ДТЕК"
-    address = sub.get("address")
-    notif_enabled = sub.get("notifications_enabled", True)
-
-    try:
-        schedule = await yasno_client.get_group_schedule(region_id, dso_id, group)
-        if not schedule:
-            sent_msg = await update.effective_message.reply_text(
-                f"❌ Не вдалося знайти групу **{group}** для **{region_name}** ({dso_name}).\n\n"
-                "Спробуйте обрати чергу зі списку або знайти за адресою:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⚙️ Налаштувати групу", callback_data="open_power_menu")]
-                ]),
-                parse_mode="Markdown"
-            )
-            await set_outage_last_msg_id(user_id, sent_msg.message_id)
-            return
-
-        img_buf = generate_outage_card_image(
-            group_schedule=schedule,
-            region_name=region_name,
-            dso_name=dso_name,
-            address=address,
-            view_day=view_day,
-        )
-        caption = format_outage_caption(
-            group_schedule=schedule,
-            view_day=view_day,
-            notifications_enabled=notif_enabled,
-        )
-        kb = get_outage_inline_keyboard(view_day=view_day)
-
-        sent_msg = await update.effective_message.reply_photo(
-            photo=img_buf.getvalue(),
-            caption=caption,
-            parse_mode="Markdown",
-            reply_markup=kb,
-        )
-        await set_outage_last_msg_id(user_id, sent_msg.message_id)
-
-    except Exception as e:
-        logger.error(f"Error fetching outages for user {user_id}: {e}", exc_info=True)
-        sent_msg = await update.effective_message.reply_text(
-            f"❌ Не вдалося завантажити графік: `{e}`\n"
-            "Спробуйте оновити пізніше або змінити групу.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Спробувати знову", callback_data="refresh_power_status")],
-                [InlineKeyboardButton("⚙️ Змінити групу", callback_data="open_power_menu")]
-            ]),
-            parse_mode="Markdown"
-        )
-        await set_outage_last_msg_id(user_id, sent_msg.message_id)
+    await repost_outage_card_to_bottom(context, chat_id, user_id)
 
 async def power_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Увімкнення сповіщень про відключення світла."""
@@ -232,11 +280,7 @@ async def group_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             dso_name=dso_name,
             group_name=group_candidate
         )
-        await update.effective_message.reply_text(
-            f"✅ Встановлено чергу (групу): **{group_candidate}** ({region_name})!",
-            parse_mode="Markdown"
-        )
-        await power_command(update, context)
+        await repost_outage_card_to_bottom(context, chat_id, user_id)
     else:
         await prompt_group_setup(update, context)
 
@@ -247,11 +291,13 @@ async def address_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await delete_user_command_message(update)
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    await cleanup_previous_outage_message(context, chat_id, user_id, delete_card=False, delete_menu=True)
 
     args = context.args
     if args and len(args) > 0:
         query = " ".join(args).strip()
         status_msg = await update.effective_message.reply_text(f"🔍 Шукаю вулицю «{query}»...")
+        await set_outage_menu_msg_id(user_id, status_msg.message_id)
         streets = await yasno_client.search_streets(25, 902, query)
         if streets:
             buttons = []
@@ -270,7 +316,7 @@ async def address_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await set_outage_awaiting(user_id, chat_id, "search_street")
     else:
         await set_outage_awaiting(user_id, chat_id, "search_street")
-        await update.effective_message.reply_text(
+        sent_msg = await update.effective_message.reply_text(
             "🔍 **Пошук групи за адресою**\n\n"
             "Напишіть у чат назву вашої вулиці (наприклад: `Хрещатик`, `Шевченка`, `Героїв полку Азов`):",
             reply_markup=InlineKeyboardMarkup([
@@ -278,3 +324,4 @@ async def address_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ]),
             parse_mode="Markdown"
         )
+        await set_outage_menu_msg_id(user_id, sent_msg.message_id)

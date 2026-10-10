@@ -596,10 +596,12 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Якщо користувач прямо ввів номер групи (наприклад: 1, 2, 2.1, 3.2 тощо)
         if re.fullmatch(r"^[1-6](\.[1-2])?$", text):
+            from handlers.common import delete_user_command_message
+            await delete_user_command_message(update)
             grp = text if "." in text else f"{text}.1"
             if not outage_sub or not outage_sub.get("region_id"):
                 context.user_data["pending_group"] = grp
-                await update.message.reply_text(
+                sent_msg = await update.message.reply_text(
                     f"⚡ Ви вказали чергу: **{grp}**.\n\n"
                     "Тепер оберіть вашу область (регіон), щоб застосувати розклад:",
                     reply_markup=InlineKeyboardMarkup([
@@ -607,26 +609,38 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     ]),
                     parse_mode="Markdown"
                 )
+                from database import set_outage_menu_msg_id
+                await set_outage_menu_msg_id(user_id, sent_msg.message_id)
                 return
             reg_id = outage_sub.get("region_id")
             reg_name = outage_sub.get("region_name") or "Регіон"
             dso_id = outage_sub.get("dso_id") or 902
             dso_name = outage_sub.get("dso_name") or "Обленерго"
             await save_outage_group(user_id, chat_id, reg_id, reg_name, dso_id, dso_name, grp)
-            await update.message.reply_text(f"✅ Встановлено чергу (групу): **{grp}** ({reg_name})!", parse_mode="Markdown")
-            await power_command(update, context)
+            from handlers.outages.commands import repost_outage_card_to_bottom
+            await repost_outage_card_to_bottom(context, chat_id, user_id)
             return
 
         # Якщо користувач надіслав координати вручну (наприклад: 50.4501, 30.5234)
         coords_match = re.fullmatch(r"^(-?\d{1,2}\.\d+)[,\s]+(-?\d{1,3}\.\d+)$", text)
         if coords_match:
+            from handlers.common import delete_user_command_message
+            await delete_user_command_message(update)
             lat = float(coords_match.group(1))
             lon = float(coords_match.group(2))
             from yasno_outages import resolve_group_from_coords
             from keyboards import get_coordinate_nudge_keyboard
             reg_id = outage_sub.get("region_id", 25) if outage_sub else 25
             dso_id = outage_sub.get("dso_id", 902) if outage_sub else 902
+            old_menu_id = outage_sub.get("last_menu_msg_id") if outage_sub else None
+            if old_menu_id:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=old_menu_id)
+                except Exception:
+                    pass
             status_msg = await update.message.reply_text("⏳ Визначаю чергу за координатами...")
+            from database import set_outage_menu_msg_id
+            await set_outage_menu_msg_id(user_id, status_msg.message_id)
             group, addr, err = await resolve_group_from_coords(lat, lon, reg_id, dso_id)
             nudge_text = (
                 "📍 **Визначення адреси за координатами**\n\n"
@@ -649,10 +663,10 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ):
             from handlers.common import delete_user_command_message
             await delete_user_command_message(update)
-            old_msg_id = outage_sub.get("last_msg_id") if outage_sub else None
-            if old_msg_id:
+            old_menu_id = outage_sub.get("last_menu_msg_id") if outage_sub else None
+            if old_menu_id:
                 try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=old_msg_id)
+                    await context.bot.delete_message(chat_id=chat_id, message_id=old_menu_id)
                 except Exception:
                     pass
 
@@ -661,7 +675,7 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             # Якщо ввели Київ
             if text_lower in ("київ", "м. київ", "м.київ", "kyiv", "kiev"):
-                from database import save_outage_city
+                from database import save_outage_city, set_outage_menu_msg_id
                 await save_outage_city(user_id, chat_id, 25, "м. Київ", 902, "ДТЕК Київські електромережі", None, "Київ")
                 context.user_data["outage_region_id"] = 25
                 context.user_data["outage_region_name"] = "м. Київ"
@@ -675,11 +689,12 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "Напишіть у чат назву вашої вулиці (наприклад: `Хрещатик`, `Шевченка`, `Перемоги`):",
                     parse_mode="Markdown"
                 )
-                await set_outage_last_msg_id(user_id, sent_msg.message_id)
+                await set_outage_menu_msg_id(user_id, sent_msg.message_id)
                 return
 
             # Якщо ввели Дніпро
             if text_lower in ("дніпро", "м. дніпро", "м.дніпро", "dnipro"):
+                from database import set_outage_menu_msg_id
                 buttons = [
                     [
                         InlineKeyboardButton("🏙️ Дніпро (ДТЕК)", callback_data="power_set_city:3:301:Дніпропетровська область:ДТЕК Дніпровські електромережі:6:м. Дніпро"),
@@ -692,13 +707,14 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     reply_markup=InlineKeyboardMarkup(buttons),
                     parse_mode="Markdown"
                 )
-                await set_outage_last_msg_id(user_id, sent_msg.message_id)
+                await set_outage_menu_msg_id(user_id, sent_msg.message_id)
                 return
 
             # Загальноукраїнський пошук (будь-яке місто, селище, село або область України)
             from yasno_outages import find_ukrainian_settlement
             status_msg = await update.message.reply_text(f"🔍 Шукаю населений пункт «{text_clean}»...")
-            await set_outage_last_msg_id(user_id, status_msg.message_id)
+            from database import set_outage_menu_msg_id
+            await set_outage_menu_msg_id(user_id, status_msg.message_id)
             try:
                 found = await find_ukrainian_settlement(text_clean)
                 if found:
@@ -826,10 +842,10 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         elif awaiting == "search_street":
             from handlers.common import delete_user_command_message
             await delete_user_command_message(update)
-            old_msg_id = outage_sub.get("last_msg_id") if outage_sub else None
-            if old_msg_id:
+            old_menu_id = outage_sub.get("last_menu_msg_id") if outage_sub else None
+            if old_menu_id:
                 try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=old_msg_id)
+                    await context.bot.delete_message(chat_id=chat_id, message_id=old_menu_id)
                 except Exception:
                     pass
 
@@ -838,7 +854,8 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             city_id = outage_sub.get("city_id") or context.user_data.get("outage_city_id")
             city_name = outage_sub.get("city_name") or context.user_data.get("outage_city_name") or outage_sub.get("region_name") or "обраного міста"
             status_msg = await update.message.reply_text(f"🔍 Шукаю вулицю «{text}» у {city_name}...")
-            await set_outage_last_msg_id(user_id, status_msg.message_id)
+            from database import set_outage_menu_msg_id
+            await set_outage_menu_msg_id(user_id, status_msg.message_id)
             try:
                 streets = await yasno_client.search_streets(reg_id, dso_id, text, city_id=city_id)
                 if streets:
@@ -869,10 +886,10 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         elif awaiting == "search_house":
             from handlers.common import delete_user_command_message
             await delete_user_command_message(update)
-            old_msg_id = outage_sub.get("last_msg_id") if outage_sub else None
-            if old_msg_id:
+            old_menu_id = outage_sub.get("last_menu_msg_id") if outage_sub else None
+            if old_menu_id:
                 try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=old_msg_id)
+                    await context.bot.delete_message(chat_id=chat_id, message_id=old_menu_id)
                 except Exception:
                     pass
 
@@ -884,6 +901,8 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 city_id = outage_sub.get("city_id") or context.user_data.get("outage_city_id")
                 city_name = outage_sub.get("city_name") or context.user_data.get("outage_city_name") or outage_sub.get("region_name") or "обраного міста"
                 status_msg = await update.message.reply_text(f"🔍 Шукаю будинок «{text}»...")
+                from database import set_outage_menu_msg_id
+                await set_outage_menu_msg_id(user_id, status_msg.message_id)
                 try:
                     houses = await yasno_client.search_houses(reg_id, dso_id, street_id, text)
                     if houses:
@@ -906,13 +925,14 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                                 city_id=city_id,
                                 city_name=city_name,
                             )
-                            await status_msg.edit_text(
-                                f"🎉 Знайдено групу для будинку: **{group_res}**!\n"
-                                f"• Адреса: `{full_addr}`\n\n"
-                                "Завантажую ваш розклад...",
-                                parse_mode="Markdown"
-                            )
-                            await power_command(update, context)
+                            try:
+                                await status_msg.delete()
+                            except Exception:
+                                pass
+                            from database import clear_outage_menu_msg_id
+                            await clear_outage_menu_msg_id(user_id)
+                            from handlers.outages.commands import repost_outage_card_to_bottom
+                            await repost_outage_card_to_bottom(context, chat_id, user_id)
                             return
                         else:
                             await status_msg.edit_text("❌ Не вдалося визначити групу для цієї адреси у системі Yasno.")

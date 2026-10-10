@@ -148,6 +148,10 @@ def init_db():
         except Exception:
             pass
         try:
+            cursor.execute("ALTER TABLE outage_subscriptions ADD COLUMN last_menu_msg_id INTEGER")
+        except Exception:
+            pass
+        try:
             cursor.execute("UPDATE outage_subscriptions SET region_id=NULL, region_name=NULL, dso_id=NULL, dso_name=NULL, city_id=NULL, city_name=NULL WHERE group_name IS NULL OR group_name='None' OR group_name=''")
         except Exception:
             pass
@@ -755,7 +759,7 @@ def get_outage_subscription_sync(user_id: int) -> dict:
             SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
                    group_name, address, notifications_enabled, last_msg_id,
                    last_schedule_hash, awaiting_input, updated_at,
-                   notify_advance_30m, lat, lon, city_id, city_name
+                   notify_advance_30m, lat, lon, city_id, city_name, last_menu_msg_id
             FROM outage_subscriptions WHERE user_id=?
         ''', (int(user_id),))
         row = cursor.fetchone()
@@ -780,6 +784,7 @@ def get_outage_subscription_sync(user_id: int) -> dict:
             "lon": row[15] if len(row) > 15 else None,
             "city_id": row[16] if len(row) > 16 else None,
             "city_name": row[17] if len(row) > 17 else None,
+            "last_menu_msg_id": row[18] if len(row) > 18 else None,
         }
 
 async def get_outage_subscription(user_id: int) -> dict:
@@ -790,7 +795,7 @@ async def get_outage_subscription(user_id: int) -> dict:
             SELECT user_id, chat_id, region_id, region_name, dso_id, dso_name,
                    group_name, address, notifications_enabled, last_msg_id,
                    last_schedule_hash, awaiting_input, updated_at,
-                   notify_advance_30m, lat, lon, city_id, city_name
+                   notify_advance_30m, lat, lon, city_id, city_name, last_menu_msg_id
             FROM outage_subscriptions WHERE user_id=?
         ''', (int(user_id),)) as cursor:
             row = await cursor.fetchone()
@@ -815,6 +820,7 @@ async def get_outage_subscription(user_id: int) -> dict:
                 "lon": row[15] if len(row) > 15 else None,
                 "city_id": row[16] if len(row) > 16 else None,
                 "city_name": row[17] if len(row) > 17 else None,
+                "last_menu_msg_id": row[18] if len(row) > 18 else None,
             }
 
 def save_outage_group_sync(
@@ -1055,6 +1061,21 @@ async def set_outage_last_msg_id(user_id: int, msg_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE outage_subscriptions SET last_msg_id=? WHERE user_id=?", (int(msg_id) if msg_id else None, int(user_id)))
         await db.commit()
+
+async def set_outage_menu_msg_id(user_id: int, msg_id: int):
+    if aiosqlite is None:
+        def _sync():
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE outage_subscriptions SET last_menu_msg_id=? WHERE user_id=?", (int(msg_id) if msg_id else None, int(user_id)))
+                conn.commit()
+        return await asyncio.to_thread(_sync)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE outage_subscriptions SET last_menu_msg_id=? WHERE user_id=?", (int(msg_id) if msg_id else None, int(user_id)))
+        await db.commit()
+
+async def clear_outage_menu_msg_id(user_id: int):
+    await set_outage_menu_msg_id(user_id, None)
 
 async def update_outage_schedule_hash(user_id: int, schedule_hash: str):
     if aiosqlite is None:

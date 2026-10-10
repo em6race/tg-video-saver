@@ -11,6 +11,8 @@ from database import (
     save_outage_city,
     set_outage_awaiting,
     set_outage_last_msg_id,
+    set_outage_menu_msg_id,
+    clear_outage_menu_msg_id,
     toggle_outage_notifications,
     toggle_outage_advance_notification,
     save_outage_coords,
@@ -32,6 +34,10 @@ from keyboards import (
 )
 from handlers.common import check_access
 from handlers.outages.state import _user_last_power_refresh, _user_last_view_day
+from handlers.outages.commands import (
+    repost_outage_card_to_bottom,
+    cleanup_previous_outage_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,15 +89,36 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
 
         _user_last_power_refresh[user_id] = now
         sub = await get_outage_subscription(user_id)
-        if not sub or not sub.get("group_name"):
+
+        # Якщо користувач натиснув "🔙 До графіка" всередині меню (текстове повідомлення)
+        if not query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await clear_outage_menu_msg_id(user_id)
+
+            if not sub or not sub.get("group_name") or sub.get("group_name") == "None":
+                await query.answer("📍 Спочатку оберіть вашу чергу (групу)!", show_alert=True)
+                return True
+
+            await repost_outage_card_to_bottom(context, chat_id, user_id)
+            await query.answer("✅ Повернуто до графіка", show_alert=False)
+            return True
+
+        # Користувач натиснув "🔄 Оновити" на самій картці (фото)
+        if not sub or not sub.get("group_name") or sub.get("group_name") == "None":
             await query.answer("📍 Спочатку оберіть вашу чергу (групу)!", show_alert=True)
             return True
+
+        # Видаляємо будь-яке старе меню, якщо раптом було відкрите
+        await cleanup_previous_outage_message(context, chat_id, user_id, delete_card=False, delete_menu=True)
 
         view_day = _user_last_view_day.get(user_id, "today")
         region_id = sub.get("region_id", 25)
         dso_id = sub.get("dso_id", 902)
         group = sub.get("group_name")
-        region_name = sub.get("region_name", "Київ")
+        region_name = sub.get("city_name") or sub.get("region_name") or "Київ"
         dso_name = sub.get("dso_name", "ДТЕК")
         address = sub.get("address")
         notif_enabled = sub.get("notifications_enabled", True)
@@ -116,28 +143,14 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
             )
             kb = get_outage_inline_keyboard(view_day=view_day)
 
-            if query.message.photo:
-                try:
-                    await query.edit_message_media(
-                        media=InputMediaPhoto(media=img_buf.getvalue(), caption=caption, parse_mode="Markdown"),
-                        reply_markup=kb,
-                    )
-                except Exception as edit_err:
-                    if "Message is not modified" not in str(edit_err):
-                        logger.debug(f"edit_message_media failed: {edit_err}")
-            else:
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                sent_msg = await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=img_buf.getvalue(),
-                    caption=caption,
-                    parse_mode="Markdown",
+            try:
+                await query.edit_message_media(
+                    media=InputMediaPhoto(media=img_buf.getvalue(), caption=caption, parse_mode="Markdown"),
                     reply_markup=kb,
                 )
-                await set_outage_last_msg_id(user_id, sent_msg.message_id)
+            except Exception as edit_err:
+                if "Message is not modified" not in str(edit_err):
+                    logger.debug(f"edit_message_media failed: {edit_err}")
 
             now_str = time.strftime("%H:%M:%S")
             await query.answer(f"✅ Графік актуальний ({now_str})", show_alert=False)
@@ -289,16 +302,25 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
         )
 
         if query.message.photo:
-            try:
-                await query.edit_message_caption(caption=menu_text, reply_markup=menu_kb, parse_mode="Markdown")
-            except Exception:
-                pass
+            await set_outage_last_msg_id(user_id, query.message.message_id)
+            if sub and sub.get("last_menu_msg_id"):
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_menu_msg_id"])
+                except Exception:
+                    pass
+            menu_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=menu_text,
+                reply_markup=menu_kb,
+                parse_mode="Markdown",
+            )
+            await set_outage_menu_msg_id(user_id, menu_msg.message_id)
         else:
             try:
                 await query.edit_message_text(menu_text, reply_markup=menu_kb, parse_mode="Markdown")
             except Exception:
                 pass
-        await set_outage_last_msg_id(user_id, query.message.message_id)
+            await set_outage_menu_msg_id(user_id, query.message.message_id)
         return True
 
     # 5. Вибір черги / адреси з меню
@@ -406,47 +428,17 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
             group_name=selected_grp,
         )
 
-        # Re-render fresh card
-        schedule = await yasno_client.get_group_schedule(region_id, dso_id, selected_grp)
-        if schedule:
-            view_day = _user_last_view_day.get(user_id, "today")
-            img_buf = generate_outage_card_image(
-                group_schedule=schedule,
-                region_name=region_name,
-                dso_name=dso_name,
-                view_day=view_day,
-            )
-            caption = format_outage_caption(
-                group_schedule=schedule,
-                view_day=view_day,
-                notifications_enabled=True,
-            )
-            kb = get_outage_inline_keyboard(view_day=view_day)
+        # Видаляємо текстове повідомлення меню
+        if not query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await clear_outage_menu_msg_id(user_id)
 
-            if query.message.photo:
-                await query.edit_message_media(
-                    media=InputMediaPhoto(media=img_buf.getvalue(), caption=caption, parse_mode="Markdown"),
-                    reply_markup=kb,
-                )
-            else:
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                sent_msg = await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=img_buf.getvalue(),
-                    caption=caption,
-                    parse_mode="Markdown",
-                    reply_markup=kb,
-                )
-                await set_outage_last_msg_id(user_id, sent_msg.message_id)
-        else:
-            await query.edit_message_text(
-                f"✅ Групу **{selected_grp}** збережено, але розклад наразі відсутній.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="open_power_menu")]]),
-                parse_mode="Markdown",
-            )
+        # Оновлюємо або надсилаємо свіжу картку внизу чату
+        await repost_outage_card_to_bottom(context, chat_id, user_id)
+        await query.answer(f"✅ Встановлено чергу: {selected_grp}!", show_alert=False)
         return True
 
     # 7. Список регіонів
@@ -796,50 +788,30 @@ async def handle_outages_callback_query(update: Update, context: ContextTypes.DE
             lon=lon,
         )
 
-        schedule = await yasno_client.get_group_schedule(region_id, dso_id, group)
-        if schedule:
-            view_day = _user_last_view_day.get(user_id, "today")
-            img_buf = generate_outage_card_image(
-                group_schedule=schedule,
-                region_name=region_name,
-                dso_name=dso_name,
-                address=addr,
-                view_day=view_day,
-            )
-            caption = format_outage_caption(
-                group_schedule=schedule,
-                view_day=view_day,
-                notifications_enabled=True,
-            )
-            kb = get_outage_inline_keyboard(view_day=view_day)
+        # Видаляємо повідомлення налаштування / джойстика
+        if not query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await clear_outage_menu_msg_id(user_id)
 
-            if query.message.photo:
-                await query.edit_message_media(
-                    media=InputMediaPhoto(media=img_buf.getvalue(), caption=caption, parse_mode="Markdown"),
-                    reply_markup=kb,
-                )
-            else:
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                sent_msg = await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=img_buf.getvalue(),
-                    caption=caption,
-                    parse_mode="Markdown",
-                    reply_markup=kb,
-                )
-                await set_outage_last_msg_id(user_id, sent_msg.message_id)
+        # Оновлюємо або надсилаємо свіжу картку внизу чату
+        await repost_outage_card_to_bottom(context, chat_id, user_id)
+        await query.answer(f"✅ Встановлено чергу: {group}!", show_alert=False)
         return True
 
-    # 13. Закрити картку
+    # 13. Закрити картку / меню
     elif choice == "close_power_card":
         await query.answer()
         try:
             await query.message.delete()
         except Exception:
             pass
+        if query.message.photo:
+            await cleanup_previous_outage_message(context, chat_id, user_id, delete_card=True, delete_menu=True)
+        else:
+            await clear_outage_menu_msg_id(user_id)
         return True
 
     return False
