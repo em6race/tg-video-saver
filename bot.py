@@ -18,7 +18,6 @@ from handlers.common import (
     error_handler,
     is_media_plugin_enabled,
     is_alerts_plugin_enabled,
-    is_outages_plugin_enabled,
 )
 from handlers.admin import (
     start,
@@ -60,19 +59,10 @@ logger = logging.getLogger(__name__)
 
 async def post_init(application: Application) -> None:
     alerts_enabled = is_alerts_plugin_enabled()
-    outages_enabled = is_outages_plugin_enabled()
 
     commands = [
         BotCommand("start", "Запустити бота"),
     ]
-    if outages_enabled:
-        commands.extend([
-            BotCommand("power", "Графік відключень світла зараз"),
-            BotCommand("group", "Встановити або змінити групу/чергу"),
-            BotCommand("address", "Знайти чергу за адресою"),
-            BotCommand("power_on", "Увімкнути сповіщення"),
-            BotCommand("power_off", "Вимкнути сповіщення"),
-        ])
     if alerts_enabled:
         commands.extend([
             BotCommand("alerts", "Налаштування тривог та локація"),
@@ -91,12 +81,7 @@ async def post_init(application: Application) -> None:
     ])
     await application.bot.set_my_commands(commands)
 
-    logger.info(f"Bot commands registered (Alerts: {alerts_enabled}, Outages: {outages_enabled}). Bot is ready.")
-
-    # Запуск фонового моніторингу графіків відключень (тільки якщо плагін увімкнено)
-    if outages_enabled:
-        from handlers.outages import outages_monitoring_loop
-        asyncio.create_task(outages_monitoring_loop(application))
+    logger.info(f"Bot commands registered (Alerts: {alerts_enabled}). Bot is ready.")
 
     # Запуск фонового моніторингу тривог (тільки якщо плагін увімкнено)
     if alerts_enabled:
@@ -108,8 +93,7 @@ async def post_init(application: Application) -> None:
 def main() -> None:
     media_enabled = is_media_plugin_enabled()
     alerts_enabled = is_alerts_plugin_enabled()
-    outages_enabled = is_outages_plugin_enabled()
-    print(f"Starting Telegram bot (Media: {media_enabled}, Alerts: {alerts_enabled}, Outages: {outages_enabled})...")
+    print(f"Starting Telegram bot (Media: {media_enabled}, Alerts: {alerts_enabled})...")
 
     if media_enabled:
         downloads_dir = "downloads"
@@ -136,21 +120,6 @@ def main() -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("restart", restart_command))
 
-    # Реєстрація команд відключень світла (тільки якщо ENABLE_OUTAGES_PLUGIN=true)
-    if outages_enabled:
-        from handlers.outages import (
-            power_command,
-            power_on_command,
-            power_off_command,
-            group_command,
-            address_command,
-        )
-        application.add_handler(CommandHandler(["power", "svitlo"], power_command))
-        application.add_handler(CommandHandler("group", group_command))
-        application.add_handler(CommandHandler("address", address_command))
-        application.add_handler(CommandHandler("power_on", power_on_command))
-        application.add_handler(CommandHandler("power_off", power_off_command))
-
     # Реєстрація команд тривог (тільки якщо ENABLE_ALERTS_PLUGIN=true)
     if alerts_enabled:
         application.add_handler(CommandHandler("alerts", alerts_command))
@@ -160,11 +129,8 @@ def main() -> None:
         application.add_handler(CommandHandler("alerts_off", alerts_off_command))
         application.add_handler(CommandHandler("map", map_command))
         application.add_handler(CommandHandler(["putin", "dox", "dead"], putin_command))
-
-    if alerts_enabled or outages_enabled:
         application.add_handler(MessageHandler(filters.LOCATION, location_handler))
         application.add_handler(MessageHandler(filters.Regex(r"^❌ Скасувати$"), cancel_handler))
-
 
     # Модульний плагін завантаження медіа (вмикається тільки якщо ENABLE_MEDIA_PLUGIN=true)
     if media_enabled:

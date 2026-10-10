@@ -129,30 +129,6 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     lat = location.latitude
     lon = location.longitude
 
-    user_id = update.effective_user.id
-    from handlers.alerts.callbacks import is_outages_plugin_enabled, is_alerts_plugin_enabled
-    if is_outages_plugin_enabled():
-        from database import get_outage_subscription
-        outage_sub = await get_outage_subscription(user_id)
-        awaiting = outage_sub.get("awaiting_input") if outage_sub else None
-        if awaiting or not is_alerts_plugin_enabled():
-            from yasno_outages import resolve_group_from_coords
-            from keyboards import get_coordinate_nudge_keyboard
-            reg_id = outage_sub.get("region_id", 25) if outage_sub else 25
-            dso_id = outage_sub.get("dso_id", 902) if outage_sub else 902
-            status_msg = await update.message.reply_text("⏳ Визначаю чергу відключень за GPS...")
-            group, addr, err = await resolve_group_from_coords(lat, lon, reg_id, dso_id)
-            nudge_text = (
-                "📍 **Визначення адреси за GPS**\n\n"
-                f"• Координати: `{lat:.5f}, {lon:.5f}`\n"
-                f"• Адреса: **{addr or 'Не визначено'}**\n"
-                f"• Знайдена черга: **{group or 'Не визначено'}**\n\n"
-                "Використовуйте кнопки для коригування або натисніть Підтвердити:"
-            )
-            kb = get_coordinate_nudge_keyboard(lat, lon)
-            await status_msg.edit_text(nudge_text, reply_markup=kb, parse_mode="Markdown")
-            return
-
     status_msg = await update.message.reply_text("⏳ Визначаю ваше місто, район та область за координатами...")
 
     try:
