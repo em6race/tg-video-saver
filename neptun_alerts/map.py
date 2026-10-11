@@ -216,7 +216,16 @@ async def generate_alerts_map_image(alerts_data: dict, threats_data: dict, user_
         f"🛸 Повітряних цілей у небі: **{active_threats_count}**"
     ]
     if user_sub and user_sub.get("lat") is not None:
-        caption_lines.append("🟢 *Ваша геопозиція позначена зелено-білою точкою на карті*")
+        loc_name = user_sub.get("locality") or ""
+        ob_name = user_sub.get("oblast") or ""
+        short_ob = ob_name.replace(" область", " обл.") if ob_name else ""
+        if loc_name and short_ob and loc_name not in short_ob:
+            loc_label = f" ({loc_name}, {short_ob})"
+        elif loc_name or short_ob:
+            loc_label = f" ({loc_name or short_ob})"
+        else:
+            loc_label = ""
+        caption_lines.append(f"🟢 *Ваша геопозиція{loc_label} позначена зелено-білою точкою на карті*")
 
     caption_lines.append("\n🔗 [Дані: Карта повітряних тривог — NEPTUN](https://neptun.in.ua/)")
     return map_path, "\n".join(caption_lines)
