@@ -40,45 +40,13 @@ CUSTOM_EMOJIS = {
     "air_defense_gepard": ("5287674730780835511", "⚡"),   # Gepard зенітка
 }
 
-# Варіанти відповідей на питання «Чи здох путін?», які щодня змінюються за календарем
-PUTIN_STATUS_PHRASES = [
-    "Поки дихає, але чорний пакет уже випрасувано. ⬛",
-    "На жаль, ні. Пекло все ще розширює VIP-зону. 🔥",
-    "Ще ні, але дні бункерного щура полічені. 🐀",
-    "На жаль, ще ні. Але зворотний відлік невблаганно триває. ⌛",
-    "Ще ні, але українська земля вже чекає на добриво. 🌱",
-    "На жаль, ще ні. Але доля диктаторів завжди однакова. ⚡",
-]
+# Відповідь на питання «Чи здох путін?»
+PUTIN_STATUS_PHRASE = "На жаль, ще ні."
+PUTIN_STATUS_PHRASES = [PUTIN_STATUS_PHRASE]
 
 def get_daily_putin_phrase(target_date=None) -> str:
-    """Повертає щоденну випадкову відповідь на питання 'Чи здох путін?' (рандомний порядок без повторень два дні поспіль)."""
-    if target_date is None:
-        target_date = datetime.now(pytz.timezone("Europe/Kiev")).date()
-    elif isinstance(target_date, datetime):
-        target_date = target_date.date()
-    
-    ord_val = target_date.toordinal()
-    block_size = len(PUTIN_STATUS_PHRASES)
-    if block_size == 0:
-        return "На жаль, ще ні."
-    if block_size == 1:
-        return PUTIN_STATUS_PHRASES[0]
-
-    block_id = ord_val // block_size
-    offset = ord_val % block_size
-    
-    rng = random.Random(f"putin_rnd_block_{block_id}")
-    shuffled = list(PUTIN_STATUS_PHRASES)
-    rng.shuffle(shuffled)
-    
-    # Уникаємо повторення однакової фрази на стику двох блоків
-    prev_rng = random.Random(f"putin_rnd_block_{block_id - 1}")
-    prev_shuffled = list(PUTIN_STATUS_PHRASES)
-    prev_rng.shuffle(prev_shuffled)
-    if shuffled[0] == prev_shuffled[-1] and len(shuffled) > 1:
-        shuffled[0], shuffled[1] = shuffled[1], shuffled[0]
-        
-    return shuffled[offset]
+    """Повертає фіксовану відповідь на питання 'Чи здох путін?'."""
+    return PUTIN_STATUS_PHRASE
 
 def e(key: str) -> str:
     """Повертає HTML-тег <tg-emoji> для кастомного емодзі з fallback-значенням."""
