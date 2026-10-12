@@ -75,28 +75,43 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
     raions_list = alerts_data.get("raions", [])
     oblasts_list = alerts_data.get("oblasts", [])
 
-    matched_alerts = []
+    matched_exact_raions = []
+    matched_oblast_wide = []
+    matched_other_raions_in_oblast = []
 
+    # 1. Перевіряємо обласний список NEPTUN (Крим, Луганщина, Севастополь, м. Київ тощо)
     for ob in oblasts_list:
-        ob_name = ob.get("name", "") or ob.get("oblast", "")
+        ob_name = ob.get("name", "") or ob.get("oblast", "") or ob.get("key", "")
         if _match_oblast(user_oblast, ob_name):
-            matched_alerts.append(ob)
+            matched_oblast_wide.append(ob)
 
-    if user_raion and user_oblast != "м. Київ":
-        for r in raions_list:
-            if _match_oblast(user_oblast, r.get("oblast", "")) and _match_raion(user_raion, r.get("name", ""), r.get("key", "")):
-                matched_alerts.append(r)
-    else:
-        for r in raions_list:
-            if _match_oblast(user_oblast, r.get("oblast", "")) or (user_oblast == "м. Київ" and "київ" in r.get("key", "").lower()):
-                matched_alerts.append(r)
+    is_kyiv_city = (user_oblast == "м. Київ" or "київ" in _normalize_apostrophe(user_oblast).lower())
+
+    # 2. Перевіряємо райони (raions_list)
+    for r in raions_list:
+        r_ob = r.get("oblast", "")
+        r_name = r.get("name", "")
+        r_key = r.get("key", "")
+
+        if is_kyiv_city:
+            if "київ" in r_key.lower() or "київ" in r_name.lower() or _match_oblast("м. Київ", r_ob):
+                matched_exact_raions.append(r)
+            continue
+
+        if _match_oblast(user_oblast, r_ob):
+            if user_raion and _match_raion(user_raion, r_name, r_key):
+                matched_exact_raions.append(r)
+            else:
+                matched_other_raions_in_oblast.append(r)
 
     level = "green"
     reasons = []
     since_time = None
     matched_names = []
 
-    for alert in matched_alerts:
+    # А. Пріоритет: точний збіг по району або пряма тривога по області
+    primary_alerts = matched_exact_raions + matched_oblast_wide
+    for alert in primary_alerts:
         a_level = alert.get("level", "red")
         if a_level == "red":
             level = "red"
@@ -113,6 +128,61 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         r_name = alert.get("name")
         if r_name and r_name not in matched_names:
             matched_names.append(r_name)
+
+    # Б. Регіональний захист: якщо в точного району користувача запису немає, але в ІНШИХ районах тієї ж області є тривога/загроза
+    if matched_other_raions_in_oblast:
+        other_red = [r for r in matched_other_raions_in_oblast if r.get("level") == "red"]
+        other_yellow = [r for r in matched_other_raions_in_oblast if r.get("level") == "yellow"]
+
+        if other_red:
+            level = "red"
+            other_names = [r.get("name", "").replace(" район", " р-н") for r in other_red if r.get("name")]
+            unique_other_reasons = []
+            for r in other_red:
+                for reas in r.get("reasons", []):
+                    cleaned_r = _clean_reason(reas)
+                    if cleaned_r and cleaned_r not in unique_other_reasons:
+                        unique_other_reasons.append(cleaned_r)
+
+            reasons_summary = ", ".join(unique_other_reasons) if unique_other_reasons else "Ракетна або дронова загроза"
+            if len(other_names) <= 2:
+                formatted_reason = f"Тривога в області ({', '.join(other_names)}: {reasons_summary})"
+            else:
+                formatted_reason = f"Тривога в області ({len(other_names)} р-н: {reasons_summary})"
+
+            if formatted_reason not in reasons:
+                reasons.append(formatted_reason)
+
+            for r in other_red:
+                if not since_time and r.get("since"):
+                    since_time = r.get("since")
+                if r.get("name") and r.get("name") not in matched_names:
+                    matched_names.append(r.get("name"))
+
+        elif other_yellow and level != "red":
+            level = "yellow"
+            other_names = [r.get("name", "").replace(" район", " р-н") for r in other_yellow if r.get("name")]
+            unique_other_reasons = []
+            for r in other_yellow:
+                for reas in r.get("reasons", []):
+                    cleaned_r = _clean_reason(reas)
+                    if cleaned_r and cleaned_r not in unique_other_reasons:
+                        unique_other_reasons.append(cleaned_r)
+
+            reasons_summary = ", ".join(unique_other_reasons) if unique_other_reasons else "Дронова небезпека"
+            if len(other_names) <= 2:
+                formatted_reason = f"Підвищена небезпека в області ({', '.join(other_names)}: {reasons_summary})"
+            else:
+                formatted_reason = f"Підвищена небезпека в області ({len(other_names)} р-н: {reasons_summary})"
+
+            if formatted_reason not in reasons:
+                reasons.append(formatted_reason)
+
+            for r in other_yellow:
+                if not since_time and r.get("since"):
+                    since_time = r.get("since")
+                if r.get("name") and r.get("name") not in matched_names:
+                    matched_names.append(r.get("name"))
 
     nearby_threats = []
     for t in threats_data.get("threats", []):
@@ -216,6 +286,30 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
 
     nearby_threats.sort(key=lambda x: (not x.is_towards_user, x.distance_km if x.distance_km is not None else 9999))
 
+    # Г. Автопідвищення рівня при виявленні небезпечних цілей поруч або курсом на користувача
+    if level == "green" and nearby_threats:
+        towards_threats = [t for t in nearby_threats if t.is_towards_user]
+        close_threats = [t for t in nearby_threats if t.distance_km is not None and t.distance_km <= 50]
+
+        if towards_threats:
+            top_t = towards_threats[0]
+            dist_str = f" (~{top_t.distance_km} км)" if top_t.distance_km is not None else ""
+            if top_t.type in ("ballistic", "kinzhal", "mig31k", "missile", "jet_uav"):
+                level = "red"
+                reasons.append(f"Швидкісна ціль курсом у ваш бік!{dist_str}")
+            else:
+                level = "yellow"
+                reasons.append(f"Ціль рухається у ваш бік!{dist_str}")
+        elif close_threats:
+            top_t = close_threats[0]
+            dist_str = f" (~{top_t.distance_km} км)" if top_t.distance_km is not None else ""
+            level = "yellow"
+            reasons.append(f"Повітряна ціль поруч{dist_str}")
+        elif any(_match_oblast(user_oblast, getattr(t, 'region', '') or '') for t in nearby_threats) or len(nearby_threats) > 0:
+            level = "yellow"
+            reasons.append("Зафіксовано повітряні цілі в області")
+
+    # Д. Перевірка на дорозвідку
     is_dorozvidka = False
     for r in reasons:
         if "дорозвід" in str(r).lower():
@@ -223,7 +317,8 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
             break
 
     if not is_dorozvidka:
-        for a in matched_alerts:
+        all_matched = primary_alerts + matched_other_raions_in_oblast
+        for a in all_matched:
             for r in a.get("reasons", []):
                 if "дорозвід" in str(r).lower():
                     is_dorozvidka = True

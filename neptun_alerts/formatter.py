@@ -240,7 +240,8 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
         if is_manual_check:
             lines.append(f"{e('shield_green')} <b>Наразі у вашому районі СПОКІЙНО (Тривоги немає)</b>")
             lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
-            lines.append(f"{e('radar')} <b>Радар:</b> Прямих загроз чи цілей у радіусі спостереження не виявлено.")
+            if not threats:
+                lines.append(f"{e('radar')} <b>Радар:</b> Прямих загроз чи цілей у радіусі спостереження не виявлено.")
         else:
             lines.append(f"{e('shield_green')} <b>ВІДБІЙ ПОВІТРЯНОЇ ТРИВОГИ!</b>")
             lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
