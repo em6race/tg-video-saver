@@ -129,8 +129,11 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
         if r_name and r_name not in matched_names:
             matched_names.append(r_name)
 
-    # Б. Регіональний захист: якщо в точного району користувача запису немає, але в ІНШИХ районах тієї ж області є тривога/загроза
-    if matched_other_raions_in_oblast:
+    # Б. Інші райони області:
+    # Якщо користувач підписаний на ВСЮ область (без конкретного району) — реагуємо на тривоги в будь-якому районі.
+    # Якщо ж користувач обрав КОНКРЕТНИЙ район (наприклад, Коломийський) — не турбуємо його тривогами з чужих районів,
+    # окрім випадків, коли радар бачить загрозу поруч або коли оголошено тривогу по всій області.
+    if not user_raion and matched_other_raions_in_oblast:
         other_red = [r for r in matched_other_raions_in_oblast if r.get("level") == "red"]
         other_yellow = [r for r in matched_other_raions_in_oblast if r.get("level") == "yellow"]
 
@@ -305,9 +308,6 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
             dist_str = f" (~{top_t.distance_km} км)" if top_t.distance_km is not None else ""
             level = "yellow"
             reasons.append(f"Повітряна ціль поруч{dist_str}")
-        elif any(_match_oblast(user_oblast, getattr(t, 'region', '') or '') for t in nearby_threats) or len(nearby_threats) > 0:
-            level = "yellow"
-            reasons.append("Зафіксовано повітряні цілі в області")
 
     # Д. Перевірка на дорозвідку
     is_dorozvidka = False
