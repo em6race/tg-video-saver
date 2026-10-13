@@ -16,6 +16,7 @@ from handlers.alerts.commands import (
     alerts_command,
     status_command,
     map_command,
+    alerts_history_command,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         elif text in ("🗺️ Карта тривог", "Карта тривог", "/map"):
             await map_command(update, context)
+            return
+        elif text in ("📜 Історія тривог", "Історія тривог", "Історія", "/history"):
+            await alerts_history_command(update, context)
             return
         elif text in ("🚨 Налаштувати тривоги", "Налаштувати тривоги", "/alerts"):
             await alerts_command(update, context)

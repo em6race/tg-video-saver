@@ -25,6 +25,7 @@ def get_alert_inline_keyboard(sound_enabled: bool = True, putin_enabled: bool = 
             putin_btn
         ],
         [
+            InlineKeyboardButton("📜 Історія", callback_data="alerts_history"),
             InlineKeyboardButton("📍 Змінити місто", callback_data="open_alerts")
         ]
     ])
@@ -40,11 +41,12 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton("🗺️ Карта тривог")
             ],
             [
-                KeyboardButton("🚨 Налаштувати тривоги"),
-                KeyboardButton("❓ Довідка")
+                KeyboardButton("📜 Історія тривог"),
+                KeyboardButton("🚨 Налаштувати тривоги")
             ],
             [
-                KeyboardButton("📍 Надіслати мою геопозицію", request_location=True)
+                KeyboardButton("📍 Надіслати мою геопозицію", request_location=True),
+                KeyboardButton("❓ Довідка")
             ]
         ], resize_keyboard=True)
     else:

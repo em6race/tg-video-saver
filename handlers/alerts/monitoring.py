@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 import pytz
 
-from database import set_user_last_alert_msg_id, get_all_enabled_subscriptions, get_user_subscription
+from database import set_user_last_alert_msg_id, get_all_enabled_subscriptions, get_user_subscription, record_alert_history
 from neptun_alerts import (
     fetch_neptun_data,
     fetch_ukraine_alarm_data,
@@ -21,6 +21,7 @@ from handlers.alerts.state import (
     _user_last_threat_signature,
     _user_last_auto_edit_time,
     _user_last_putin_date,
+    _user_active_alert_meta,
 )
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,49 @@ async def alerts_monitoring_loop(application) -> None:
                             _user_last_threat_signature[user_id] = current_sig
                             _user_last_auto_edit_time[user_id] = now
 
+                            if curr_level in ("red", "yellow"):
+                                if user_id not in _user_active_alert_meta:
+                                    _user_active_alert_meta[user_id] = {
+                                        "started_at": current_state.get("since") or datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M (%d.%m)"),
+                                        "alert_type": current_state.get("alert_type") or "AIR",
+                                        "max_level": curr_level,
+                                        "reasons": list(current_state.get("reasons", [])),
+                                        "start_timestamp": now
+                                    }
+                                else:
+                                    meta = _user_active_alert_meta[user_id]
+                                    if curr_level == "red":
+                                        meta["max_level"] = "red"
+                                    if current_state.get("alert_type") in ("ARTILLERY", "CHEMICAL", "NUCLEAR"):
+                                        meta["alert_type"] = current_state.get("alert_type")
+                                    for r in current_state.get("reasons", []):
+                                        if r not in meta["reasons"]:
+                                            meta["reasons"].append(r)
+                            elif curr_level == "green" and prev_level in ("red", "yellow"):
+                                meta = _user_active_alert_meta.pop(user_id, None)
+                                dur_sec = max(1, int(now - meta["start_timestamp"])) if meta else 0
+                                s_at = meta.get("started_at") if meta else ""
+                                e_at = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M (%d.%m)")
+                                a_type = meta.get("alert_type", "AIR") if meta else (current_state.get("alert_type") or "AIR")
+                                m_lvl = meta.get("max_level", prev_level) if meta else prev_level
+                                reas_str = ", ".join(meta.get("reasons", [])) if meta else ", ".join(current_state.get("reasons", []))
+                                try:
+                                    await record_alert_history(
+                                        user_id=user_id,
+                                        chat_id=chat_id,
+                                        oblast=sub.get("oblast", ""),
+                                        raion=sub.get("raion", ""),
+                                        locality=sub.get("locality", ""),
+                                        alert_type=a_type,
+                                        max_level=m_lvl,
+                                        reasons=reas_str,
+                                        started_at=s_at,
+                                        ended_at=e_at,
+                                        duration_seconds=dur_sec
+                                    )
+                                except Exception as hist_err:
+                                    logger.error(f"Failed to record alert history for {user_id}: {hist_err}")
+
                             await repost_alert_message_to_bottom(
                                 bot=application.bot,
                                 chat_id=chat_id,
@@ -168,6 +212,13 @@ async def alerts_monitoring_loop(application) -> None:
                                 prev_level=prev_level
                             )
                         elif curr_level != "green":
+                            if user_id in _user_active_alert_meta:
+                                meta = _user_active_alert_meta[user_id]
+                                if current_state.get("alert_type") in ("ARTILLERY", "CHEMICAL", "NUCLEAR"):
+                                    meta["alert_type"] = current_state.get("alert_type")
+                                for r in current_state.get("reasons", []):
+                                    if r not in meta["reasons"]:
+                                        meta["reasons"].append(r)
                             if (current_sig != prev_sig) and (now - last_auto_edit >= 60):
                                 _user_last_threat_signature[user_id] = current_sig
                                 _user_last_auto_edit_time[user_id] = now

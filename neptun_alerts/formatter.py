@@ -218,24 +218,48 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     reason_icon = _get_reason_emoji(raw_reasons_str, level)
 
     lines = []
+    alert_type = (state.get("alert_type") or "AIR").upper()
+    alert_levels = state.get("alert_levels", [])
 
-    # 1. Заголовок рівня загрози
+    # 1. Заголовок рівня загрози та типу тривоги
     if level == "red":
-        if prev_level == "yellow" and not is_manual_check:
-            lines.append(f"{e('lightning')} {e('alert_red')} <b>УВАГА! РІВЕНЬ ЗАГРОЗИ ПІДВИЩЕНО ДО ЧЕРВОНОГО!</b>")
+        if alert_type == "ARTILLERY":
+            if prev_level == "yellow" and not is_manual_check:
+                lines.append(f"{e('lightning')} {e('burst')} <b>УВАГА! ЕСКАЛАЦІЯ: ЗАГРОЗА АРТИЛЕРІЙСЬКОГО ОБСТРІЛУ!</b>")
+            else:
+                lines.append(f"{e('burst')} <b>ЗАГРОЗА АРТИЛЕРІЙСЬКОГО ОБСТРІЛУ! (Червоний рівень)</b>")
+            lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+            lines.append(f"💥 <b>Небезпека:</b> Артилерійський обстріл громади")
+            lines.append(f"🕒 <b>Обстріл триває:</b> {duration_str}")
+        elif alert_type == "CHEMICAL":
+            lines.append(f"☣️ <b>ХІМІЧНА НЕБЕЗПЕКА! (Червоний рівень)</b>")
+            lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+            lines.append(f"🕒 <b>Триває:</b> {duration_str}")
+        elif alert_type == "NUCLEAR":
+            lines.append(f"☢️ <b>РАДІАЦІЙНА НЕБЕЗПЕКА! (Червоний рівень)</b>")
+            lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+            lines.append(f"🕒 <b>Триває:</b> {duration_str}")
         else:
-            lines.append(f"{e('alert_red')} <b>ПОВІТРЯНА ТРИВОГА! (Червоний рівень)</b>")
-        lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
-        lines.append(f"{reason_icon} <b>Причина:</b> {reasons_display}")
-        lines.append(f"🕒 <b>Тривога триває:</b> {duration_str}")
+            if prev_level == "yellow" and not is_manual_check:
+                lines.append(f"{e('lightning')} {e('alert_red')} <b>УВАГА! РІВЕНЬ ЗАГРОЗИ ПІДВИЩЕНО ДО ЧЕРВОНОГО!</b>")
+            else:
+                lines.append(f"{e('alert_red')} <b>ПОВІТРЯНА ТРИВОГА! (Червоний рівень)</b>")
+            lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+            lines.append(f"{reason_icon} <b>Причина:</b> {reasons_display}")
+            lines.append(f"🕒 <b>Тривога триває:</b> {duration_str}")
     elif level == "yellow":
-        if prev_level == "red" and not is_manual_check:
-            lines.append(f"{e('alert_yellow')} <b>Рівень загрози знижено до ЖОВТОГО (Підвищена увага)</b>")
+        if alert_type == "ARTILLERY":
+            lines.append(f"{e('alert_yellow')} <b>ПІДВИЩЕНА НЕБЕЗПЕКА АРТОБСТРІЛУ! (Жовтий рівень)</b>")
+            lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+            lines.append(f"🕒 <b>Загроза триває:</b> {duration_str}")
         else:
-            lines.append(f"{e('alert_yellow')} <b>ПІДВИЩЕНА НЕБЕЗПЕКА! (Жовтий рівень)</b>")
-        lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
-        lines.append(f"{reason_icon} <b>Причина:</b> {reasons_display}")
-        lines.append(f"🕒 <b>Загроза триває:</b> {duration_str}")
+            if prev_level == "red" and not is_manual_check:
+                lines.append(f"{e('alert_yellow')} <b>Рівень загрози знижено до ЖОВТОГО (Дронова небезпека)</b>")
+            else:
+                lines.append(f"{e('alert_yellow')} <b>ПІДВИЩЕНА НЕБЕЗПЕКА! (Жовтий рівень)</b>")
+            lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
+            lines.append(f"{reason_icon} <b>Причина:</b> {reasons_display}")
+            lines.append(f"🕒 <b>Загроза триває:</b> {duration_str}")
     else:
         if is_manual_check:
             lines.append(f"{e('shield_green')} <b>Наразі у вашому районі СПОКІЙНО (Тривоги немає)</b>")
@@ -243,10 +267,25 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
             if not threats:
                 lines.append(f"{e('radar')} <b>Радар:</b> Прямих загроз чи цілей у радіусі спостереження не виявлено.")
         else:
-            lines.append(f"{e('shield_green')} <b>ВІДБІЙ ПОВІТРЯНОЇ ТРИВОГИ!</b>")
+            if alert_type == "ARTILLERY":
+                lines.append(f"{e('shield_green')} <b>ВІДБІЙ ЗАГРОЗИ АРТИЛЕРІЙСЬКОГО ОБСТРІЛУ!</b>")
+            else:
+                lines.append(f"{e('shield_green')} <b>ВІДБІЙ ПОВІТРЯНОЇ ТРИВОГИ!</b>")
             lines.append(f"{e('pin')} <b>Локація:</b> {loc_display}")
             lines.append(f"🕒 <b>Час відбою:</b> {_format_kyiv_time()}")
-            lines.append(f"\n{e('trident')} {e('flag_ua')} <i>Небезпека минула. Дякуємо силам ППО!</i>")
+            lines.append(f"\n{e('trident')} {e('flag_ua')} <i>Небезпека минула. Дякуємо силам оборони!</i>")
+
+    # 1.1 Офіційні рівні небезпеки від UkraineAlarm
+    if alert_levels and level in ("red", "yellow"):
+        lvl_items = []
+        for al in alert_levels:
+            lvl_name = (al.get("alertLevel") or "").lower()
+            lvl_reas = al.get("reason", "").strip()
+            l_icon = "🔴" if lvl_name == "red" else "🟡"
+            if lvl_reas and lvl_reas not in lvl_items:
+                lvl_items.append(f"{l_icon} <i>{html.escape(lvl_reas)}</i>")
+        if lvl_items:
+            lines.append(f"⚡ <b>Офіційний статус (Stfalcon):</b> " + " | ".join(lvl_items))
 
     # 2. Блок цілей на підльоті
     if threats:
@@ -311,4 +350,64 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
 
     now_tz = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M:%S")
     lines.append(f"\n⏱ <b>Оновлено:</b> {now_tz} | <a href=\"https://neptun.in.ua/\">NEPTUN Map</a>")
+    return "\n".join(lines)
+
+def format_alerts_history_message(sub: dict, records: list[dict], stats: dict = None) -> str:
+    """
+    Формує повідомлення з історією останніх тривог та статистикою для району користувача.
+    """
+    oblast = sub.get("oblast") or "Невідома область"
+    raion = sub.get("raion") or ""
+    locality = sub.get("locality") or ""
+
+    loc_parts = [p for p in [locality, raion, oblast] if p]
+    unique_loc = []
+    for p in loc_parts:
+        p_clean = p.replace(" область", " обл.").replace(" район", " р-н")
+        if p_clean not in unique_loc:
+            unique_loc.append(p_clean)
+    loc_display = html.escape(", ".join(unique_loc))
+
+    lines = [
+        f"📜 <b>ІСТОРІЯ ПОВІТРЯНИХ ТРИВОГ</b>",
+        f"{e('pin')} <b>Локація:</b> {loc_display}\n"
+    ]
+
+    if not records:
+        lines.append("ℹ️ <i>Історія тривог для цієї локації формується у реальному часі.</i>")
+        lines.append("<i>Як тільки у вашому районі буде зафіксовано нову тривогу або відбій — дані з'являться тут автоматично.</i>")
+    else:
+        lines.append("🕒 <b>Останні зафіксовані тривоги:</b>")
+        for idx, rec in enumerate(records, 1):
+            s_time = rec.get("started_at", "")
+            e_time = rec.get("ended_at", "")
+            dur_sec = rec.get("duration_seconds") or 0
+            a_type = (rec.get("alert_type") or "AIR").upper()
+            lvl = (rec.get("max_level") or "red").lower()
+            reasons = rec.get("reasons") or ""
+
+            hours = dur_sec // 3600
+            mins = (dur_sec % 3600) // 60
+            dur_text = f"{hours} год {mins} хв" if hours > 0 else f"{mins} хв"
+            if dur_sec < 60:
+                dur_text = "&lt; 1 хв"
+
+            type_icon = "💥" if a_type == "ARTILLERY" else ("🚨" if lvl == "red" else "⚠️")
+            type_name = "Артилерія" if a_type == "ARTILLERY" else ("Червоний рівень" if lvl == "red" else "Жовтий рівень")
+
+            lines.append(f"\n{idx}. {type_icon} <b>{s_time} — {e_time}</b> (<b>{dur_text}</b>)")
+            lines.append(f"   ↳ {type_name}" + (f": <i>{html.escape(reasons[:60])}</i>" if reasons else ""))
+
+        if stats:
+            total_count = stats.get("total_count", len(records))
+            total_sec = stats.get("total_seconds", sum(r.get("duration_seconds", 0) for r in records))
+            th = total_sec // 3600
+            tm = (total_sec % 3600) // 60
+            total_dur_text = f"{th} год {tm} хв" if th > 0 else f"{tm} хв"
+
+            lines.append(f"\n📊 <b>Підсумок за останні 7 днів:</b>")
+            lines.append(f"• Зафіксовано тривог: <b>{total_count}</b>")
+            lines.append(f"• Сумарний час небезпеки: <b>{total_dur_text}</b>")
+
+    lines.append(f"\n{e('trident')} {e('flag_ua')} <i>Бережіть себе та перебувайте в укриттях під час сирен!</i>")
     return "\n".join(lines)

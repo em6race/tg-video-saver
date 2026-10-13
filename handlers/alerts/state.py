@@ -7,3 +7,4 @@ _user_last_threat_signature = {}    # user_id -> кортеж-сигнатура
 _user_last_auto_edit_time = {}      # user_id -> час останнього редагування ботом
 _user_last_manual_refresh = {}      # user_id -> час останнього запиту користувача
 _user_last_putin_date = {}          # user_id -> дата останнього оновлення статусу путіна ("ДД.ММ.РРРР")
+_user_active_alert_meta = {}        # user_id -> метадані поточної тривоги (started_at, alert_type, max_level, reasons)

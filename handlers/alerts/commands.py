@@ -11,6 +11,8 @@ from database import (
     disable_user_alerts,
     enable_user_alerts,
     get_user_subscription,
+    get_user_alert_history,
+    get_user_alert_stats,
 )
 from neptun_alerts import (
     forward_geocode,
@@ -18,6 +20,7 @@ from neptun_alerts import (
     fetch_ukraine_alarm_data,
     evaluate_user_alert_state,
     format_alert_message,
+    format_alerts_history_message,
     make_threat_signature,
     generate_alerts_map_image,
     get_daily_putin_phrase,
@@ -364,6 +367,39 @@ async def putin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     kb = InlineKeyboardMarkup([[toggle_btn]])
     await update.effective_message.reply_text(
         status_text,
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+async def alerts_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обробник команди /history — показує історію тривог та статистику для району користувача."""
+    if not await check_access(update, context):
+        return
+    await delete_user_command_message(update)
+    user_id = update.effective_user.id
+    sub = await get_user_subscription(user_id)
+    if not sub or not sub.get("oblast"):
+        await update.effective_message.reply_text(
+            "📍 Спочатку вкажіть ваше місто або область для перегляду історії:\n/alerts",
+            parse_mode="HTML"
+        )
+        return
+
+    records = await get_user_alert_history(user_id, limit=5)
+    stats = await get_user_alert_stats(user_id, days=7)
+    msg_text = format_alerts_history_message(sub, records, stats)
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Оновити", callback_data="alerts_history"),
+            InlineKeyboardButton("📊 Статус", callback_data="refresh_alert_status")
+        ],
+        [
+            InlineKeyboardButton("📍 Змінити місто", callback_data="open_alerts")
+        ]
+    ])
+    await update.effective_message.reply_text(
+        msg_text,
         reply_markup=kb,
         parse_mode="HTML"
     )

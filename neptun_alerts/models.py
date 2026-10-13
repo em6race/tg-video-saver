@@ -47,6 +47,9 @@ class AlertStateData:
     matched_names: List[str]
     nearby_threats: List[ThreatItem] = field(default_factory=list)
     is_dorozvidka: bool = False
+    alert_type: str = "AIR"
+    alert_levels: List[dict] = field(default_factory=list)
+    official_reasons: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -56,7 +59,10 @@ class AlertStateData:
             "since": self.since,
             "matched_names": self.matched_names,
             "nearby_threats": [t.to_dict() if isinstance(t, ThreatItem) else t for t in self.nearby_threats],
-            "is_dorozvidka": self.is_dorozvidka
+            "is_dorozvidka": self.is_dorozvidka,
+            "alert_type": self.alert_type,
+            "alert_levels": self.alert_levels,
+            "official_reasons": self.official_reasons
         }
 
 UKRAINE_OBLASTS = [

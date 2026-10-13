@@ -15,6 +15,7 @@ from .evaluator import evaluate_user_alert_state
 from .formatter import (
     make_threat_signature,
     format_alert_message,
+    format_alerts_history_message,
     get_daily_putin_phrase,
     PUTIN_STATUS_PHRASES,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "evaluate_user_alert_state",
     "make_threat_signature",
     "format_alert_message",
+    "format_alerts_history_message",
     "get_daily_putin_phrase",
     "PUTIN_STATUS_PHRASES",
     "generate_alerts_map_image",

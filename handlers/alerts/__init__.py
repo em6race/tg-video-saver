@@ -23,11 +23,10 @@ from .commands import (
     handle_manual_alert_refresh,
     status_command,
     putin_command,
+    alerts_history_command,
 )
-from .callbacks import (
-    handle_callback_query,
-    handle_unknown,
-)
+from .callbacks import handle_callback_query
+from .text_input import handle_unknown
 
 __all__ = [
     "_user_last_alert_state",
@@ -48,6 +47,7 @@ __all__ = [
     "handle_manual_alert_refresh",
     "status_command",
     "putin_command",
+    "alerts_history_command",
     "handle_callback_query",
     "handle_unknown",
 ]

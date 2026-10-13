@@ -35,6 +35,7 @@ from handlers.alerts import (
     alerts_off_command,
     map_command,
     putin_command,
+    alerts_history_command,
     location_handler,
     cancel_handler,
     handle_callback_query,
@@ -68,6 +69,7 @@ async def post_init(application: Application) -> None:
         commands.extend([
             BotCommand("alerts", "Налаштування тривог та локація"),
             BotCommand("status", "Поточний стан тривог у вашому районі"),
+            BotCommand("history", "Історія останніх тривог та статистика"),
             BotCommand("alerts_on", "Увімкнути сповіщення"),
             BotCommand("alerts_off", "Вимкнути сповіщення"),
             BotCommand("map", "Карта тривог України зараз"),
@@ -143,6 +145,7 @@ def main() -> None:
         application.add_handler(CommandHandler("alerts_on", alerts_on_command))
         application.add_handler(CommandHandler("alerts_off", alerts_off_command))
         application.add_handler(CommandHandler("map", map_command))
+        application.add_handler(CommandHandler(["history", "istoriya"], alerts_history_command))
         application.add_handler(CommandHandler(["putin", "dox", "dead"], putin_command))
         application.add_handler(MessageHandler(filters.LOCATION, location_handler))
         application.add_handler(MessageHandler(filters.Regex(r"^❌ Скасувати$"), cancel_handler))

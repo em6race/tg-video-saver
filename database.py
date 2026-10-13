@@ -107,6 +107,26 @@ def init_db():
             )
         ''')
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_messages_user ON alert_messages(user_id)")
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS alert_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                chat_id INTEGER,
+                oblast TEXT,
+                raion TEXT,
+                locality TEXT,
+                alert_type TEXT,
+                max_level TEXT,
+                reasons TEXT,
+                started_at TEXT,
+                ended_at TEXT,
+                duration_seconds INTEGER,
+                created_at TEXT
+            )
+        ''')
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_history_user ON alert_history(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_history_loc ON alert_history(oblast, raion)")
         conn.commit()
 
 # --- АСИНХРОННИЙ КЕШ ФАЙЛІВ (ДЛЯ ПЛАГІНА МЕДІА) ---
@@ -701,5 +721,139 @@ def toggle_user_putin_sync(user_id: int) -> bool:
         cursor.execute("UPDATE alert_subscriptions SET putin_check_enabled=? WHERE user_id=?", (new_val, int(user_id)))
         conn.commit()
         return bool(new_val)
+
+def record_alert_history_sync(
+    user_id: int,
+    chat_id: int,
+    oblast: str,
+    raion: str,
+    locality: str,
+    alert_type: str,
+    max_level: str,
+    reasons: str,
+    started_at: str,
+    ended_at: str,
+    duration_seconds: int
+):
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO alert_history (
+                user_id, chat_id, oblast, raion, locality, alert_type, max_level, reasons, started_at, ended_at, duration_seconds, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (int(user_id), int(chat_id), oblast or "", raion or "", locality or "", alert_type or "AIR", max_level or "red", reasons or "", started_at or "", ended_at or "", int(duration_seconds), now))
+        conn.commit()
+
+async def record_alert_history(
+    user_id: int,
+    chat_id: int,
+    oblast: str,
+    raion: str,
+    locality: str,
+    alert_type: str,
+    max_level: str,
+    reasons: str,
+    started_at: str,
+    ended_at: str,
+    duration_seconds: int
+):
+    if aiosqlite is None:
+        return await asyncio.to_thread(
+            record_alert_history_sync,
+            user_id, chat_id, oblast, raion, locality, alert_type, max_level, reasons, started_at, ended_at, duration_seconds
+        )
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO alert_history (
+                user_id, chat_id, oblast, raion, locality, alert_type, max_level, reasons, started_at, ended_at, duration_seconds, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (int(user_id), int(chat_id), oblast or "", raion or "", locality or "", alert_type or "AIR", max_level or "red", reasons or "", started_at or "", ended_at or "", int(duration_seconds), now))
+        await db.commit()
+
+def get_user_alert_history_sync(user_id: int, limit: int = 5) -> list[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, oblast, raion, locality, alert_type, max_level, reasons, started_at, ended_at, duration_seconds, created_at
+            FROM alert_history WHERE user_id=?
+            ORDER BY id DESC LIMIT ?
+        ''', (int(user_id), int(limit)))
+        rows = cursor.fetchall()
+        return [
+            {
+                "id": r[0],
+                "oblast": r[1],
+                "raion": r[2],
+                "locality": r[3],
+                "alert_type": r[4],
+                "max_level": r[5],
+                "reasons": r[6],
+                "started_at": r[7],
+                "ended_at": r[8],
+                "duration_seconds": r[9],
+                "created_at": r[10]
+            }
+            for r in rows
+        ]
+
+async def get_user_alert_history(user_id: int, limit: int = 5) -> list[dict]:
+    if aiosqlite is None:
+        return await asyncio.to_thread(get_user_alert_history_sync, user_id, limit)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('''
+            SELECT id, oblast, raion, locality, alert_type, max_level, reasons, started_at, ended_at, duration_seconds, created_at
+            FROM alert_history WHERE user_id=?
+            ORDER BY id DESC LIMIT ?
+        ''', (int(user_id), int(limit))) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "oblast": r[1],
+                    "raion": r[2],
+                    "locality": r[3],
+                    "alert_type": r[4],
+                    "max_level": r[5],
+                    "reasons": r[6],
+                    "started_at": r[7],
+                    "ended_at": r[8],
+                    "duration_seconds": r[9],
+                    "created_at": r[10]
+                }
+                for r in rows
+            ]
+
+def get_user_alert_stats_sync(user_id: int, days: int = 7) -> dict:
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*), COALESCE(SUM(duration_seconds), 0)
+            FROM alert_history
+            WHERE user_id=? AND created_at >= ?
+        ''', (int(user_id), cutoff))
+        row = cursor.fetchone()
+        return {
+            "total_count": row[0] if row else 0,
+            "total_seconds": row[1] if row else 0
+        }
+
+async def get_user_alert_stats(user_id: int, days: int = 7) -> dict:
+    if aiosqlite is None:
+        return await asyncio.to_thread(get_user_alert_stats_sync, user_id, days)
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('''
+            SELECT COUNT(*), COALESCE(SUM(duration_seconds), 0)
+            FROM alert_history
+            WHERE user_id=? AND created_at >= ?
+        ''', (int(user_id), cutoff)) as cursor:
+            row = await cursor.fetchone()
+            return {
+                "total_count": row[0] if row else 0,
+                "total_seconds": row[1] if row else 0
+            }
 
 init_db()

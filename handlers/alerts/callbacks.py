@@ -12,6 +12,8 @@ from database import (
     disable_user_alerts,
     enable_user_alerts,
     get_user_subscription,
+    get_user_alert_history,
+    get_user_alert_stats,
     set_user_last_alert_msg_id,
     toggle_user_sound,
     toggle_user_putin,
@@ -24,6 +26,7 @@ from neptun_alerts import (
     fetch_ukraine_alarm_data,
     evaluate_user_alert_state,
     format_alert_message,
+    format_alerts_history_message,
     make_threat_signature,
     generate_alerts_map_image,
     UKRAINE_OBLASTS,
@@ -346,6 +349,32 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif choice in ("alerts_check", "refresh_alert_status"):
         user_id = query.from_user.id
         await handle_manual_alert_refresh(query, user_id)
+        return
+
+    elif choice == "alerts_history":
+        user_id = query.from_user.id
+        await query.answer("Завантажую історію...")
+        sub = await get_user_subscription(user_id)
+        if not sub or not sub.get("oblast"):
+            await query.message.reply_text("📍 Спочатку оберіть місто або область:\n/alerts", parse_mode="HTML")
+            return
+        records = await get_user_alert_history(user_id, limit=5)
+        stats = await get_user_alert_stats(user_id, days=7)
+        msg_text = format_alerts_history_message(sub, records, stats)
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🔄 Оновити історію", callback_data="alerts_history"),
+                InlineKeyboardButton("📊 Статус", callback_data="refresh_alert_status")
+            ],
+            [
+                InlineKeyboardButton("📍 Змінити місто", callback_data="open_alerts")
+            ]
+        ])
+        await query.message.reply_text(
+            msg_text,
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
         return
 
     elif choice == "alerts_map_refresh":

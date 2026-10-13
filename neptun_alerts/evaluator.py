@@ -101,10 +101,16 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
 
             item_level = "yellow"
             item_reasons = []
+            item_alert_levels = []
+            item_alert_type = "AIR"
             item_since = item.get("lastUpdate")
 
             for alert in active_alerts:
+                a_type = (alert.get("type") or "AIR").upper()
+                if a_type in ("ARTILLERY", "URBAN_FIGHTS", "CHEMICAL", "NUCLEAR"):
+                    item_alert_type = a_type
                 for lvl in alert.get("activeAlertLevels", []):
+                    item_alert_levels.append(lvl)
                     lvl_val = (lvl.get("alertLevel") or "").lower()
                     if lvl_val == "red":
                         item_level = "red"
@@ -118,6 +124,8 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
                 "name": r_name,
                 "type": r_type,
                 "level": item_level,
+                "alert_type": item_alert_type,
+                "alert_levels": item_alert_levels,
                 "reasons": item_reasons,
                 "since": item_since,
             }
@@ -174,6 +182,9 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
     reasons = []
     since_time = None
     matched_names = []
+    alert_type = "AIR"
+    alert_levels = []
+    official_reasons = []
 
     # А. Пріоритет: точний збіг по району або пряма тривога по області
     primary_alerts = matched_exact_raions + matched_oblast_wide
@@ -184,9 +195,19 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
         elif a_level == "yellow" and level != "red":
             level = "yellow"
 
+        a_type = alert.get("alert_type")
+        if a_type in ("ARTILLERY", "URBAN_FIGHTS", "CHEMICAL", "NUCLEAR"):
+            alert_type = a_type
+
+        for lvl in alert.get("alert_levels", []):
+            if lvl not in alert_levels:
+                alert_levels.append(lvl)
+
         for reason in alert.get("reasons", []):
             if reason not in reasons:
                 reasons.append(reason)
+            if reason not in official_reasons:
+                official_reasons.append(reason)
 
         if not since_time and alert.get("since"):
             since_time = alert.get("since")
@@ -200,6 +221,16 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
     # Якщо ж користувач обрав КОНКРЕТНИЙ район (наприклад, Коломийський) — не турбуємо його тривогами з чужих районів,
     # окрім випадків, коли радар бачить загрозу поруч або коли оголошено тривогу по всій області.
     if not user_raion and matched_other_raions_in_oblast:
+        for r in matched_other_raions_in_oblast:
+            a_type = r.get("alert_type")
+            if a_type in ("ARTILLERY", "URBAN_FIGHTS", "CHEMICAL", "NUCLEAR"):
+                alert_type = a_type
+            for lvl in r.get("alert_levels", []):
+                if lvl not in alert_levels:
+                    alert_levels.append(lvl)
+            for reas in r.get("reasons", []):
+                if reas not in official_reasons:
+                    official_reasons.append(reas)
         other_red = [r for r in matched_other_raions_in_oblast if r.get("level") == "red"]
         other_yellow = [r for r in matched_other_raions_in_oblast if r.get("level") == "yellow"]
 
@@ -422,6 +453,9 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
         since=since_time,
         matched_names=matched_names,
         nearby_threats=nearby_threats[:5],
-        is_dorozvidka=is_dorozvidka
+        is_dorozvidka=is_dorozvidka,
+        alert_type=alert_type,
+        alert_levels=alert_levels,
+        official_reasons=official_reasons
     )
     return state_obj.to_dict()
