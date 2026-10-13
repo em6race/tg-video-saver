@@ -1,6 +1,8 @@
 import os
 import sys
 import time
+import json
+import tempfile
 import logging
 import asyncio
 import subprocess
@@ -75,6 +77,40 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
 async def alerts_monitoring_loop(application) -> None:
     """Фоновий процес опитування NEPTUN API та розсилки сповіщень підписникам."""
     logger.info("Starting NEPTUN alert monitoring loop...")
+
+    # Перевірка чи щойно відбувся рестарт через /restart
+    try:
+        restart_file = os.path.join(tempfile.gettempdir(), "tg_alerts_restart.json")
+        if os.path.exists(restart_file):
+            try:
+                with open(restart_file, "r", encoding="utf-8") as f:
+                    r_data = json.load(f)
+                os.remove(restart_file)
+                c_id = r_data.get("chat_id")
+                m_id = r_data.get("message_id")
+                g_out = r_data.get("git_output", "")
+                p_ok = r_data.get("pull_success", True)
+                if c_id and m_id:
+                    if p_ok:
+                        new_text = f"✅ **Оновлено з GitHub:**\n`{g_out[:300]}`\n\nБот успішно перезапущено! 🚀"
+                    else:
+                        new_text = f"⚠️ **Не вдалося оновити код:**\n`{g_out[:300]}`\n\nБот перезапущено на поточній версії. ⚠️"
+                    await application.bot.edit_message_text(
+                        chat_id=c_id,
+                        message_id=m_id,
+                        text=new_text,
+                        parse_mode="Markdown"
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to finalize restart notice: {e}")
+                if os.path.exists(restart_file):
+                    try:
+                        os.remove(restart_file)
+                    except Exception:
+                        pass
+    except Exception as init_err:
+        logger.debug(f"Restart file check error: {init_err}")
+
     while True:
         try:
             subs = await get_all_enabled_subscriptions()
@@ -126,24 +162,7 @@ async def alerts_monitoring_loop(application) -> None:
                             _user_last_threat_signature[user_id] = current_sig
                             _user_last_auto_edit_time[user_id] = now
 
-                            if last_msg_id:
-                                msg_text = format_alert_message(sub, current_state, is_manual_check=True)
-                                try:
-                                    await application.bot.edit_message_text(
-                                        chat_id=chat_id,
-                                        message_id=last_msg_id,
-                                        text=msg_text,
-                                        reply_markup=alert_kb,
-                                        parse_mode="HTML",
-                                        disable_web_page_preview=True
-                                    )
-                                    continue
-                                except Exception as edit_err:
-                                    err_str = str(edit_err).lower()
-                                    if "message is not modified" in err_str:
-                                        continue
-                                    logger.debug(f"Startup in-place edit failed ({edit_err}), reposting...")
-
+                            # Видаляємо старе повідомлення тривоги до перезапуску та надсилаємо нове насамкінець чату
                             await repost_alert_message_to_bottom(
                                 bot=application.bot,
                                 chat_id=chat_id,

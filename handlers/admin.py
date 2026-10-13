@@ -340,11 +340,18 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     if not await is_admin(user_id, ADMIN_ID):
         await update.message.reply_text("У вас немає прав для цієї команди 🚫")
         return
 
-    status_msg = await update.message.reply_text("⏳ Завантажую оновлення з GitHub (гілка `main`) і перезавантажуюсь... 🔄", parse_mode="Markdown", disable_notification=True)
+    await delete_user_command_message(update)
+    status_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text="⏳ Завантажую оновлення з GitHub (гілка `main`) і перезавантажуюсь... 🔄",
+        parse_mode="Markdown",
+        disable_notification=True
+    )
     await asyncio.sleep(0.5)
 
     git_output = ""
@@ -375,6 +382,20 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await status_msg.edit_text(f"⚠️ **Не вдалося оновити код:**\n`{git_output[:300]}`\n\nПерезапуск на поточній версії... 🔄", parse_mode="Markdown")
         except Exception:
             pass
+
+    import tempfile
+    import json
+    try:
+        restart_file = os.path.join(tempfile.gettempdir(), "tg_alerts_restart.json")
+        with open(restart_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "chat_id": chat_id,
+                "message_id": status_msg.message_id,
+                "git_output": git_output,
+                "pull_success": pull_success,
+            }, f)
+    except Exception as save_err:
+        logger.warning(f"Failed to save restart status file: {save_err}")
 
     try:
         if context.application.updater and context.application.updater.running:
