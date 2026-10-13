@@ -15,6 +15,7 @@ from database import (
 from neptun_alerts import (
     forward_geocode,
     fetch_neptun_data,
+    fetch_ukraine_alarm_data,
     evaluate_user_alert_state,
     format_alert_message,
     make_threat_signature,
@@ -226,7 +227,8 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
 
     try:
         alerts_data, threats_data = await fetch_neptun_data(force=True)
-        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+        ua_data = await fetch_ukraine_alarm_data()
+        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
 
         prev_sig = _user_last_threat_signature.get(user_id)
         current_sig = make_threat_signature(current_state)
@@ -310,7 +312,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         alerts_data, threats_data = await fetch_neptun_data(force=True)
-        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+        ua_data = await fetch_ukraine_alarm_data()
+        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
         _user_last_alert_state[user_id] = current_state["level"]
         _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 

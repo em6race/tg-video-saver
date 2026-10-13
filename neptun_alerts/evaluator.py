@@ -3,6 +3,7 @@ import logging
 from typing import Optional
 
 from .models import ThreatItem, AlertStateData
+from .districts_map import get_oblast_for_district
 from .geocoding import (
     haversine_km,
     calculate_bearing,
@@ -44,13 +45,13 @@ def _format_confidence(conf_raw: str) -> Optional[str]:
         return "Непідтверджена"
     return str(conf_raw).capitalize()
 
-def _match_raion(user_raion: str, api_raion_name: str, api_raion_key: str) -> bool:
+def _match_raion(user_raion: str, api_raion_name: str, api_raion_key: str = "") -> bool:
     if not user_raion:
         return False
-    u_norm = _normalize_apostrophe(user_raion).lower().replace(" район", "").strip()
-    n_norm = _normalize_apostrophe(api_raion_name).lower().replace(" район", "").strip()
-    k_norm = _normalize_apostrophe(api_raion_key).lower().strip()
-    return u_norm == n_norm or u_norm == k_norm or (u_norm and (u_norm in n_norm or n_norm in u_norm))
+    u_norm = _normalize_apostrophe(user_raion).lower().replace(" район", "").replace(" р-н", "").strip()
+    n_norm = _normalize_apostrophe(api_raion_name).lower().replace(" район", "").replace(" р-н", "").strip()
+    k_norm = _normalize_apostrophe(api_raion_key).lower().strip() if api_raion_key else ""
+    return u_norm == n_norm or (k_norm and u_norm == k_norm) or (u_norm and (u_norm in n_norm or n_norm in u_norm))
 
 def _match_oblast(user_oblast: str, api_oblast: str) -> bool:
     if not user_oblast or not api_oblast:
@@ -59,9 +60,22 @@ def _match_oblast(user_oblast: str, api_oblast: str) -> bool:
     a_norm = _normalize_apostrophe(api_oblast).lower().replace("область", "").replace("м.", "").replace("місто", "").strip()
     return u_norm == a_norm or (u_norm and (u_norm in a_norm or a_norm in u_norm))
 
-def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) -> dict:
+def _match_community(user_text: str, api_comm_name: str) -> bool:
+    if not user_text or not api_comm_name:
+        return False
+    u = _normalize_apostrophe(user_text).lower().replace("територіальна громада", "").replace("громада", "").replace(" район", "").replace(" р-н", "").replace("м.", "").replace("місто", "").strip()
+    c = _normalize_apostrophe(api_comm_name).lower().replace("територіальна громада", "").replace("громада", "").replace(" район", "").replace(" р-н", "").replace("м.", "").replace("місто", "").strip()
+    if not u or not c:
+        return False
+    if u == c or u in c or c in u:
+        return True
+    u_stem = u[:max(4, len(u)-2)]
+    c_stem = c[:max(4, len(c)-2)]
+    return u_stem in c or c_stem in u
+
+def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, ukraine_alarm_data: Optional[list] = None) -> dict:
     """
-    Аналізує дані NEPTUN для конкретного користувача та визначає:
+    Аналізує офіційні дані UkraineAlarm та радар NEPTUN для конкретного користувача:
     - Чи є тривога (active: bool)
     - Рівень: 'red', 'yellow' або 'green'
     - Причини (reasons: list[str])
@@ -69,40 +83,92 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict) 
     """
     user_oblast = sub.get("oblast") or ""
     user_raion = sub.get("raion") or ""
+    user_locality = sub.get("locality") or ""
     user_lat = sub.get("lat")
     user_lon = sub.get("lon")
-
-    raions_list = alerts_data.get("raions", [])
-    oblasts_list = alerts_data.get("oblasts", [])
 
     matched_exact_raions = []
     matched_oblast_wide = []
     matched_other_raions_in_oblast = []
 
-    # 1. Перевіряємо обласний список NEPTUN (Крим, Луганщина, Севастополь, м. Київ тощо)
-    for ob in oblasts_list:
-        ob_name = ob.get("name", "") or ob.get("oblast", "") or ob.get("key", "")
-        if _match_oblast(user_oblast, ob_name):
-            matched_oblast_wide.append(ob)
+    if ukraine_alarm_data:
+        for item in ukraine_alarm_data:
+            r_type = item.get("regionType")
+            r_name = item.get("regionName", "")
+            active_alerts = item.get("activeAlerts", [])
+            if not active_alerts:
+                continue
 
-    is_kyiv_city = (user_oblast == "м. Київ" or "київ" in _normalize_apostrophe(user_oblast).lower())
+            item_level = "yellow"
+            item_reasons = []
+            item_since = item.get("lastUpdate")
 
-    # 2. Перевіряємо райони (raions_list)
-    for r in raions_list:
-        r_ob = r.get("oblast", "")
-        r_name = r.get("name", "")
-        r_key = r.get("key", "")
+            for alert in active_alerts:
+                for lvl in alert.get("activeAlertLevels", []):
+                    lvl_val = (lvl.get("alertLevel") or "").lower()
+                    if lvl_val == "red":
+                        item_level = "red"
+                    r_text = _clean_reason(lvl.get("reason", ""))
+                    if r_text and r_text not in item_reasons:
+                        item_reasons.append(r_text)
+                    if not item_since and lvl.get("createdAt"):
+                        item_since = lvl.get("createdAt")
 
-        if is_kyiv_city:
-            if "київ" in r_key.lower() or "київ" in r_name.lower() or _match_oblast("м. Київ", r_ob):
-                matched_exact_raions.append(r)
-            continue
+            alert_entry = {
+                "name": r_name,
+                "type": r_type,
+                "level": item_level,
+                "reasons": item_reasons,
+                "since": item_since,
+            }
 
-        if _match_oblast(user_oblast, r_ob):
-            if user_raion and _match_raion(user_raion, r_name, r_key):
-                matched_exact_raions.append(r)
-            else:
-                matched_other_raions_in_oblast.append(r)
+            if r_type == "State":
+                if _match_oblast(user_oblast, r_name):
+                    matched_oblast_wide.append(alert_entry)
+            elif r_type == "District":
+                if user_raion and _match_raion(user_raion, r_name, ""):
+                    matched_exact_raions.append(alert_entry)
+                else:
+                    dist_ob = get_oblast_for_district(r_name)
+                    if dist_ob and _match_oblast(user_oblast, dist_ob):
+                        matched_other_raions_in_oblast.append(alert_entry)
+            elif r_type == "Community":
+                is_exact_comm = False
+                if user_locality and _match_community(user_locality, r_name):
+                    is_exact_comm = True
+                elif user_raion and _match_community(user_raion, r_name):
+                    is_exact_comm = True
+
+                if is_exact_comm:
+                    matched_exact_raions.append(alert_entry)
+
+    else:
+        # Резервний аналіз за даними NEPTUN alerts_data
+        raions_list = alerts_data.get("raions", []) if alerts_data else []
+        oblasts_list = alerts_data.get("oblasts", []) if alerts_data else []
+
+        for ob in oblasts_list:
+            ob_name = ob.get("name", "") or ob.get("oblast", "") or ob.get("key", "")
+            if _match_oblast(user_oblast, ob_name):
+                matched_oblast_wide.append(ob)
+
+        is_kyiv_city = (user_oblast == "м. Київ" or "київ" in _normalize_apostrophe(user_oblast).lower())
+
+        for r in raions_list:
+            r_ob = r.get("oblast", "")
+            r_name = r.get("name", "")
+            r_key = r.get("key", "")
+
+            if is_kyiv_city:
+                if "київ" in r_key.lower() or "київ" in r_name.lower() or _match_oblast("м. Київ", r_ob):
+                    matched_exact_raions.append(r)
+                continue
+
+            if _match_oblast(user_oblast, r_ob):
+                if user_raion and _match_raion(user_raion, r_name, r_key):
+                    matched_exact_raions.append(r)
+                else:
+                    matched_other_raions_in_oblast.append(r)
 
     level = "green"
     reasons = []

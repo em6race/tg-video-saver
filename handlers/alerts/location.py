@@ -11,6 +11,7 @@ from database import (
 from neptun_alerts import (
     reverse_geocode,
     fetch_neptun_data,
+    fetch_ukraine_alarm_data,
     evaluate_user_alert_state,
     format_alert_message,
     make_threat_signature,
@@ -102,8 +103,9 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
 
     try:
         alerts_data, threats_data = await fetch_neptun_data()
+        ua_data = await fetch_ukraine_alarm_data()
         sub = await get_user_subscription(user_id)
-        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
         _user_last_alert_state[user_id] = current_state["level"]
         _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
@@ -152,7 +154,8 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if sub and sub.get("oblast"):
         try:
             alerts_data, threats_data = await fetch_neptun_data()
-            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+            ua_data = await fetch_ukraine_alarm_data()
+            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
             _user_last_alert_state[user_id] = current_state["level"]
             _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 

@@ -21,6 +21,7 @@ from database import (
 from neptun_alerts import (
     forward_geocode,
     fetch_neptun_data,
+    fetch_ukraine_alarm_data,
     evaluate_user_alert_state,
     format_alert_message,
     make_threat_signature,
@@ -205,7 +206,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if sub and sub.get("oblast"):
             try:
                 alerts_data, threats_data = await fetch_neptun_data()
-                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+                ua_data = await fetch_ukraine_alarm_data()
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
                 _user_last_alert_state[user_id] = current_state["level"]
                 _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
@@ -249,7 +251,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if sub and sub.get("oblast"):
             try:
                 alerts_data, threats_data = await fetch_neptun_data()
-                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+                ua_data = await fetch_ukraine_alarm_data()
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
                 _user_last_alert_state[user_id] = current_state["level"]
                 _user_last_threat_signature[user_id] = make_threat_signature(current_state)
 
@@ -325,7 +328,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         if sub:
             sound_enabled = sub.get("sound_enabled", True)
             alerts_data, threats_data = await fetch_neptun_data()
-            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+            ua_data = await fetch_ukraine_alarm_data()
+            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
             msg_text = format_alert_message(sub, current_state, is_manual_check=True)
             kb = get_alert_inline_keyboard(sound_enabled, new_putin)
             try:

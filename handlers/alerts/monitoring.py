@@ -10,6 +10,7 @@ import pytz
 from database import set_user_last_alert_msg_id, get_all_enabled_subscriptions, get_user_subscription
 from neptun_alerts import (
     fetch_neptun_data,
+    fetch_ukraine_alarm_data,
     evaluate_user_alert_state,
     format_alert_message,
     make_threat_signature,
@@ -78,15 +79,16 @@ async def alerts_monitoring_loop(application) -> None:
             subs = await get_all_enabled_subscriptions()
             if subs:
                 alerts_data, threats_data = await fetch_neptun_data()
+                ua_data = await fetch_ukraine_alarm_data()
 
-                if alerts_data or threats_data:
+                if alerts_data or threats_data or ua_data:
                     now = time.time()
                     for sub in subs:
                         user_id = sub["user_id"]
                         chat_id = sub["chat_id"]
                         last_msg_id = sub.get("last_alert_msg_id")
 
-                        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data)
+                        current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
                         curr_level = current_state["level"]
                         prev_level = _user_last_alert_state.get(user_id)
                         current_sig = make_threat_signature(current_state)
