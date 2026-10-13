@@ -395,7 +395,7 @@ async def alerts_history_command(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("📊 Статус", callback_data="refresh_alert_status")
         ],
         [
-            InlineKeyboardButton("📍 Змінити місто", callback_data="open_alerts")
+            InlineKeyboardButton("⚙️ Меню", callback_data="alerts_settings_menu")
         ]
     ])
     await update.effective_message.reply_text(

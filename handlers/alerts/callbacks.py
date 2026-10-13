@@ -33,6 +33,8 @@ from neptun_alerts import (
 )
 from keyboards import (
     get_alert_inline_keyboard,
+    get_alert_settings_keyboard,
+    build_alert_settings_view,
     get_main_reply_keyboard,
     ALERT_REFRESH_COOLDOWN,
 )
@@ -306,6 +308,52 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await help_command(update, context)
         return
 
+    elif choice == "alerts_settings_menu":
+        await query.answer()
+        user_id = query.from_user.id
+        sub = await get_user_subscription(user_id)
+        text, kb = build_alert_settings_view(sub)
+        try:
+            await query.edit_message_text(text=text, reply_markup=kb, parse_mode="HTML")
+        except Exception as e:
+            logger.debug(f"Could not open alert settings menu: {e}")
+        return
+
+    elif choice == "back_to_status":
+        await query.answer()
+        user_id = query.from_user.id
+        sub = await get_user_subscription(user_id)
+        if sub and sub.get("oblast"):
+            try:
+                alerts_data, threats_data = await fetch_neptun_data()
+                ua_data = await fetch_ukraine_alarm_data()
+                current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
+                _user_last_alert_state[user_id] = current_state["level"]
+                _user_last_threat_signature[user_id] = make_threat_signature(current_state)
+
+                sound_enabled = sub.get("sound_enabled", True)
+                putin_enabled = sub.get("putin_check_enabled", True)
+                msg_text = format_alert_message(sub, current_state, is_manual_check=True)
+                alert_kb = get_alert_inline_keyboard(sound_enabled, putin_enabled)
+                await query.edit_message_text(
+                    text=msg_text,
+                    reply_markup=alert_kb,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True
+                )
+            except Exception as e:
+                logger.debug(f"Failed in-place edit on back_to_status: {e}")
+                await repost_alert_message_to_bottom(
+                    bot=context.bot,
+                    chat_id=query.message.chat_id,
+                    user_id=user_id,
+                    sub=sub,
+                    current_state=current_state,
+                    is_manual_check=True,
+                    extra_msg_id_to_delete=query.message.message_id
+                )
+        return
+
     elif choice == "toggle_sound":
         user_id = query.from_user.id
         new_sound = await toggle_user_sound(user_id)
@@ -314,9 +362,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         sub = await get_user_subscription(user_id)
         if sub:
+            text, kb = build_alert_settings_view(sub)
             try:
-                putin_enabled = sub.get("putin_check_enabled", True)
-                await query.edit_message_reply_markup(reply_markup=get_alert_inline_keyboard(new_sound, putin_enabled))
+                await query.edit_message_text(text=text, reply_markup=kb, parse_mode="HTML")
             except Exception as e:
                 logger.debug(f"Could not update reply_markup on toggle_sound: {e}")
         return
@@ -329,18 +377,25 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         sub = await get_user_subscription(user_id)
         if sub:
-            sound_enabled = sub.get("sound_enabled", True)
-            alerts_data, threats_data = await fetch_neptun_data()
-            ua_data = await fetch_ukraine_alarm_data()
-            current_state = evaluate_user_alert_state(sub, alerts_data, threats_data, ua_data)
-            msg_text = format_alert_message(sub, current_state, is_manual_check=True)
-            kb = get_alert_inline_keyboard(sound_enabled, new_putin)
+            # Якщо клік було зроблено з окремої команди /putin
+            if query.message and "Чи здох путін?" in (query.message.text or ""):
+                toggle_btn = (
+                    InlineKeyboardButton("☠️ Путін у картці: ВИМК", callback_data="toggle_putin")
+                    if new_putin
+                    else InlineKeyboardButton("☠️ Путін у картці: УВІМК", callback_data="toggle_putin")
+                )
+                try:
+                    await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([[toggle_btn]]))
+                except Exception:
+                    pass
+                return
+
+            text, kb = build_alert_settings_view(sub)
             try:
                 await query.edit_message_text(
-                    text=msg_text,
+                    text=text,
                     reply_markup=kb,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True
+                    parse_mode="HTML"
                 )
             except Exception as e:
                 logger.debug(f"Could not update message on toggle_putin: {e}")
@@ -367,7 +422,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("📊 Статус", callback_data="refresh_alert_status")
             ],
             [
-                InlineKeyboardButton("📍 Змінити місто", callback_data="open_alerts")
+                InlineKeyboardButton("⚙️ Меню", callback_data="alerts_settings_menu")
             ]
         ])
         await query.message.reply_text(
