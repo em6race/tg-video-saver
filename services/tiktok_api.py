@@ -1,6 +1,8 @@
 import aiohttp
+import asyncio
 import os
 import time
+import uuid
 
 async def fetch_tiktok_data(url: str):
     """
@@ -50,18 +52,20 @@ async def fetch_tiktok_data(url: str):
             
             # Check if it's a slideshow
             if "images" in post_data and post_data["images"]:
-                media_paths = []
-                # Limit to 10 images for Telegram MediaGroup limits
-                for i, img_url in enumerate(post_data["images"][:10]): 
-                    img_path = os.path.join(downloads_dir, f"tiktok_img_{int(time.time())}_{i}.jpg")
-                    async with session.get(img_url) as i_resp:
-                        with open(img_path, 'wb') as f:
-                            f.write(await i_resp.read())
-                    media_paths.append(img_path)
+                req_id = f"{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                async def _download_img(idx: int, img_u: str) -> str:
+                    img_p = os.path.join(downloads_dir, f"tiktok_img_{req_id}_{idx}.jpg")
+                    async with session.get(img_u) as i_resp:
+                        content = await i_resp.read()
+                        with open(img_p, 'wb') as f:
+                            f.write(content)
+                    return img_p
+
+                media_paths = await asyncio.gather(*[_download_img(i, u) for i, u in enumerate(post_data["images"])])
                     
                 return {
                     "type": "slideshow",
-                    "media": media_paths,
+                    "media": list(media_paths),
                     "audio": audio_path,
                     "title": title
                 }

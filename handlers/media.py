@@ -45,6 +45,28 @@ async def clean_old_downloads():
         except Exception as e:
             logger.warning(f"Could not delete old file {file_path}: {e}")
 
+def chunk_media_list(items: list, max_chunk: int = 10) -> list[list]:
+    """
+    Splits items into Telegram-compliant media groups (between 2 and 10 items).
+    Avoids leaving a single item hanging when total items > 1 by rebalancing the last chunk.
+    """
+    n = len(items)
+    if n <= max_chunk:
+        return [items] if items else []
+    chunks = []
+    i = 0
+    while i < n:
+        remaining = n - i
+        if remaining == max_chunk + 1:
+            take = max_chunk - 1
+        elif remaining > max_chunk:
+            take = max_chunk
+        else:
+            take = remaining
+        chunks.append(items[i:i+take])
+        i += take
+    return chunks
+
 async def process_audio(target_message, context, url):
     cached_id = await get_cached_file_id(url, "audio")
     if cached_id:
@@ -204,27 +226,65 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     data = await fetch_tiktok_data(url)
 
                     if data["type"] == "slideshow":
-                        media_group = []
-                        opened_files = []
-                        for i, photo_path in enumerate(data["media"]):
-                            f = open(photo_path, 'rb')
-                            opened_files.append(f)
-                            media_group.append(InputMediaPhoto(f))
-
+                        photo_paths = data.get("media", [])
+                        chunks = chunk_media_list(photo_paths, max_chunk=10)
                         try:
-                            await update.message.reply_media_group(media=media_group, write_timeout=60, read_timeout=60, pool_timeout=60)
+                            for idx, chunk in enumerate(chunks):
+                                if idx > 0:
+                                    await asyncio.sleep(0.5)
+                                if len(chunk) == 1:
+                                    with open(chunk[0], 'rb') as photo_file:
+                                        await update.message.reply_photo(
+                                            photo=photo_file,
+                                            write_timeout=60,
+                                            read_timeout=60,
+                                            pool_timeout=60
+                                        )
+                                elif len(chunk) >= 2:
+                                    opened_files = []
+                                    media_group = []
+                                    try:
+                                        for photo_path in chunk:
+                                            f = open(photo_path, 'rb')
+                                            opened_files.append(f)
+                                            media_group.append(InputMediaPhoto(f))
+                                        await update.message.reply_media_group(
+                                            media=media_group,
+                                            write_timeout=60,
+                                            read_timeout=60,
+                                            pool_timeout=60
+                                        )
+                                    finally:
+                                        for f in opened_files:
+                                            try:
+                                                f.close()
+                                            except Exception:
+                                                pass
                         finally:
-                            for f in opened_files:
-                                f.close()
-                            for photo_path in data["media"]:
-                                if os.path.exists(photo_path):
-                                    os.remove(photo_path)
+                            for photo_path in photo_paths:
+                                try:
+                                    if os.path.exists(photo_path):
+                                        os.remove(photo_path)
+                                except Exception:
+                                    pass
 
                         if data.get("audio"):
-                            with open(data["audio"], 'rb') as audio_file:
-                                await update.message.reply_audio(audio=audio_file, write_timeout=60, read_timeout=60, pool_timeout=60)
-                            if os.path.exists(data["audio"]):
-                                os.remove(data["audio"])
+                            try:
+                                with open(data["audio"], 'rb') as audio_file:
+                                    await update.message.reply_audio(
+                                        audio=audio_file,
+                                        title=data.get("title", "TikTok Audio"),
+                                        performer="TikTok",
+                                        write_timeout=60,
+                                        read_timeout=60,
+                                        pool_timeout=60
+                                    )
+                            finally:
+                                try:
+                                    if os.path.exists(data["audio"]):
+                                        os.remove(data["audio"])
+                                except Exception:
+                                    pass
                     else:
                         video_path = data["media"][0]
                         with open(video_path, 'rb') as video_file:

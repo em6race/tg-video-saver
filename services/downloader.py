@@ -20,7 +20,6 @@ def _download_video_sync(url: str) -> str:
         'no_warnings': True,
         'merge_output_format': 'mp4',
         'postprocessor_args': ['-threads', '1'],
-        'extractor_args': {'youtube': {'player_client': ['android']}},
         'concurrent_fragment_downloads': 10,
     }
     
@@ -62,7 +61,6 @@ def _download_audio_sync(query: str) -> dict:
     ydl_opts = {
         'format': 'bestaudio[ext=mp3]/bestaudio/best',
         'outtmpl': output_template,
-        'extractor_args': {'youtube': {'player_client': ['android']}},
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
@@ -80,74 +78,114 @@ def _download_audio_sync(query: str) -> dict:
         ydl_opts['external_downloader'] = 'aria2c'
         ydl_opts['external_downloader_args'] = ['-x', '10', '-s', '10', '-k', '1M']
     
+    filename = None
+    info = None
+
+    # 1. Спроба первинного пошуку (YouTube або прямий URL)
     try:
-        print(f"[DEBUG] Searching YouTube (primary): {query}")
+        print(f"[DEBUG] Primary audio search/download: {query}")
         with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=True)
-            if 'entries' in info and len(info['entries']) == 0:
-                raise Exception("No results found on YouTube")
+            res = ydl.extract_info(query, download=True)
+            if 'entries' in res and len(res['entries']) == 0:
+                raise Exception("No results found")
+            info = res['entries'][0] if 'entries' in res else res
             
-            # yt-dlp changes the extension to .mp3 after processing
-            filename = ydl.prepare_filename(info)
-            base, _ = os.path.splitext(filename)
+            cand_name = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(cand_name)
             mp3_filename = base + ".mp3"
-            
             if os.path.exists(mp3_filename):
                 filename = mp3_filename
+            elif os.path.exists(cand_name):
+                filename = cand_name
     except Exception as e:
         print(f"[DEBUG] Primary search failed: {e}")
-        if "ytsearch" in query:
-            filename = None
-            if " Topic" in query and "No results found" in str(e):
-                fallback_query = query.replace(" Topic", "")
-                try:
-                    print(f"[DEBUG] Searching YouTube (fallback): {fallback_query}")
-                    with YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(fallback_query, download=True)
-                        if 'entries' in info and len(info['entries']) == 0:
-                            raise Exception("No results")
-                        filename = ydl.prepare_filename(info)
-                        base, _ = os.path.splitext(filename)
-                        mp3_filename = base + ".mp3"
-                        if os.path.exists(mp3_filename):
-                            filename = mp3_filename
-                except Exception as fb_e:
-                    print(f"[DEBUG] Fallback YouTube search failed: {fb_e}")
-            
-            if not filename:
-                sc_query = query.replace("ytsearch", "scsearch").replace(" Topic", "")
-                print(f"[DEBUG] Searching SoundCloud (fallback): {sc_query}")
-                with YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(sc_query, download=True)
-                    if 'entries' in info and len(info['entries']) == 0:
-                        raise Exception("No results found on soundcloud")
-                    filename = ydl.prepare_filename(info)
-                    base, _ = os.path.splitext(filename)
+
+    # 2. Якщо це був пошук на YouTube і він містив " Topic", пробуємо без " Topic"
+    if not filename and "ytsearch" in query and " Topic" in query:
+        fallback_query = query.replace(" Topic", "")
+        try:
+            print(f"[DEBUG] YouTube fallback search: {fallback_query}")
+            with YoutubeDL(ydl_opts) as ydl:
+                res = ydl.extract_info(fallback_query, download=True)
+                if 'entries' in res and len(res['entries']) == 0:
+                    raise Exception("No results on YouTube fallback")
+                info = res['entries'][0] if 'entries' in res else res
+                cand_name = ydl.prepare_filename(info)
+                base, _ = os.path.splitext(cand_name)
+                mp3_filename = base + ".mp3"
+                if os.path.exists(mp3_filename):
+                    filename = mp3_filename
+                elif os.path.exists(cand_name):
+                    filename = cand_name
+        except Exception as fb_e:
+            print(f"[DEBUG] YouTube fallback failed: {fb_e}")
+
+    # 3. Надійний фолбек на SoundCloud з перебором кандидатів (автоматично оминає DRM/Go+ прев'ю)
+    if not filename and ("ytsearch" in query or "scsearch" in query):
+        import re
+        clean_query = re.sub(r'^(ytsearch\d*:|scsearch\d*:)', '', query).replace(" Topic", "").strip()
+        sc_search_query = f"scsearch5:{clean_query}"
+        print(f"[DEBUG] Searching SoundCloud candidates: {sc_search_query}")
+        
+        search_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+        }
+        sc_entries = []
+        try:
+            with YoutubeDL(search_opts) as ydl_s:
+                sc_results = ydl_s.extract_info(sc_search_query, download=False)
+                sc_entries = sc_results.get('entries', []) if sc_results else []
+        except Exception as sc_s_err:
+            print(f"[DEBUG] SoundCloud search failed: {sc_s_err}")
+
+        for sc_idx, sc_entry in enumerate(sc_entries):
+            sc_url = sc_entry.get('url')
+            if not sc_url:
+                continue
+            print(f"[DEBUG] Trying SoundCloud candidate {sc_idx + 1}: {sc_entry.get('title')}")
+            try:
+                with YoutubeDL(ydl_opts) as ydl_sc:
+                    cand_info = ydl_sc.extract_info(sc_url, download=True)
+                    cand_name = ydl_sc.prepare_filename(cand_info)
+                    base, _ = os.path.splitext(cand_name)
                     mp3_filename = base + ".mp3"
                     if os.path.exists(mp3_filename):
-                        filename = mp3_filename
-        else:
-            raise e
-            
-    if not os.path.exists(filename):
+                        filename = mp3_mp3 = mp3_filename
+                    elif os.path.exists(cand_name):
+                        filename = cand_name
+                    if filename and os.path.exists(filename):
+                        info = cand_info
+                        print(f"[DEBUG] Successfully downloaded SoundCloud candidate: {info.get('title')}")
+                        break
+            except Exception as cand_err:
+                print(f"[DEBUG] SoundCloud candidate {sc_idx + 1} failed: {cand_err}")
+                continue
+
+    if not filename or not os.path.exists(filename):
         import glob
         files = glob.glob(os.path.join(DOWNLOADS_DIR, f"{file_id}.*"))
         if files:
             filename = files[0]
-            
+
+    if not filename or not os.path.exists(filename):
+        raise Exception("Не вдалося завантажити аудіо (спроби через YouTube та SoundCloud завершилися невдачею).")
+        
     final_path = filename
         
     thumbnail = None
-    if info.get('thumbnails'):
+    if info and info.get('thumbnails'):
         thumbnail = info['thumbnails'][-1]['url']
-    elif info.get('thumbnail'):
+    elif info and info.get('thumbnail'):
         thumbnail = info['thumbnail']
         
-    performer = info.get('artist') or info.get('uploader') or info.get('creator') or 'Unknown Artist'
+    performer = (info.get('artist') or info.get('uploader') or info.get('creator') or 'Unknown Artist') if info else 'Unknown Artist'
+    title = (info.get('title') or 'Unknown Title') if info else 'Unknown Title'
         
     return {
         'file_path': final_path,
-        'title': info.get('title', 'Unknown Title'),
+        'title': title,
         'performer': performer,
         'thumbnail_url': thumbnail
     }
