@@ -384,7 +384,7 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
             )
             nearby_threats.append(threat_item)
 
-    nearby_threats.sort(key=lambda x: (not x.is_towards_user, x.distance_km if x.distance_km is not None else 9999))
+    nearby_threats.sort(key=lambda x: (x.distance_km if x.distance_km is not None else 9999, not x.is_towards_user))
 
     # Г. Автопідвищення рівня при виявленні небезпечних цілей поруч або курсом на користувача
     if level == "green" and nearby_threats:
