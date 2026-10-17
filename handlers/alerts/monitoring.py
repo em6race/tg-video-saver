@@ -29,6 +29,32 @@ from handlers.alerts.state import (
 logger = logging.getLogger(__name__)
 ADMIN_ID = os.getenv("ADMIN_ID")
 
+def _parse_alert_start_time(since_val: str = None, fallback_ts: float = None) -> tuple[str, float]:
+    """
+    Повертає (formatted_str, unix_timestamp) за часом Києва.
+    formatted_str має вигляд 'HH:MM (DD.MM)'
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Kyiv")
+    except Exception:
+        tz = pytz.timezone("Europe/Kiev")
+
+    if fallback_ts is None:
+        fallback_ts = time.time()
+
+    if since_val:
+        try:
+            dt = datetime.fromisoformat(since_val.replace("Z", "+00:00")).astimezone(tz)
+            return dt.strftime("%H:%M (%d.%m)"), dt.timestamp()
+        except Exception:
+            pass
+        if "(" in since_val and ")" in since_val:
+            return since_val, fallback_ts
+
+    dt = datetime.fromtimestamp(fallback_ts, tz)
+    return dt.strftime("%H:%M (%d.%m)"), fallback_ts
+
 async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: dict, current_state: dict, is_manual_check: bool = False, prev_level: str = None, extra_msg_id_to_delete: int = None) -> None:
     """Видаляє попереднє повідомлення тривоги та надсилає НОВЕ насамкінець чату."""
     last_msg_id = sub.get("last_alert_msg_id") if sub else None
@@ -162,6 +188,16 @@ async def alerts_monitoring_loop(application) -> None:
                             _user_last_threat_signature[user_id] = current_sig
                             _user_last_auto_edit_time[user_id] = now
 
+                            if curr_level in ("red", "yellow") and user_id not in _user_active_alert_meta:
+                                start_fmt, start_ts = _parse_alert_start_time(current_state.get("since"), fallback_ts=now)
+                                _user_active_alert_meta[user_id] = {
+                                    "started_at": start_fmt,
+                                    "alert_type": current_state.get("alert_type") or "AIR",
+                                    "max_level": curr_level,
+                                    "reasons": list(current_state.get("reasons", [])),
+                                    "start_timestamp": start_ts
+                                }
+
                             # Видаляємо старе повідомлення тривоги до перезапуску та надсилаємо нове насамкінець чату
                             await repost_alert_message_to_bottom(
                                 bot=application.bot,
@@ -180,12 +216,13 @@ async def alerts_monitoring_loop(application) -> None:
 
                             if curr_level in ("red", "yellow"):
                                 if user_id not in _user_active_alert_meta:
+                                    start_fmt, start_ts = _parse_alert_start_time(current_state.get("since"), fallback_ts=now)
                                     _user_active_alert_meta[user_id] = {
-                                        "started_at": current_state.get("since") or datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M (%d.%m)"),
+                                        "started_at": start_fmt,
                                         "alert_type": current_state.get("alert_type") or "AIR",
                                         "max_level": curr_level,
                                         "reasons": list(current_state.get("reasons", [])),
-                                        "start_timestamp": now
+                                        "start_timestamp": start_ts
                                     }
                                 else:
                                     meta = _user_active_alert_meta[user_id]
@@ -198,28 +235,29 @@ async def alerts_monitoring_loop(application) -> None:
                                             meta["reasons"].append(r)
                             elif curr_level == "green" and prev_level in ("red", "yellow"):
                                 meta = _user_active_alert_meta.pop(user_id, None)
-                                dur_sec = max(1, int(now - meta["start_timestamp"])) if meta else 0
-                                s_at = meta.get("started_at") if meta else ""
-                                e_at = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M (%d.%m)")
-                                a_type = meta.get("alert_type", "AIR") if meta else (current_state.get("alert_type") or "AIR")
-                                m_lvl = meta.get("max_level", prev_level) if meta else prev_level
-                                reas_str = ", ".join(meta.get("reasons", [])) if meta else ", ".join(current_state.get("reasons", []))
-                                try:
-                                    await record_alert_history(
-                                        user_id=user_id,
-                                        chat_id=chat_id,
-                                        oblast=sub.get("oblast", ""),
-                                        raion=sub.get("raion", ""),
-                                        locality=sub.get("locality", ""),
-                                        alert_type=a_type,
-                                        max_level=m_lvl,
-                                        reasons=reas_str,
-                                        started_at=s_at,
-                                        ended_at=e_at,
-                                        duration_seconds=dur_sec
-                                    )
-                                except Exception as hist_err:
-                                    logger.error(f"Failed to record alert history for {user_id}: {hist_err}")
+                                if meta and meta.get("started_at"):
+                                    dur_sec = max(1, int(now - meta["start_timestamp"]))
+                                    s_at = meta["started_at"]
+                                    e_at = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%H:%M (%d.%m)")
+                                    a_type = meta.get("alert_type", "AIR")
+                                    m_lvl = meta.get("max_level", prev_level)
+                                    reas_str = ", ".join(meta.get("reasons", [])) if meta.get("reasons") else ", ".join(current_state.get("reasons", []))
+                                    try:
+                                        await record_alert_history(
+                                            user_id=user_id,
+                                            chat_id=chat_id,
+                                            oblast=sub.get("oblast", ""),
+                                            raion=sub.get("raion", ""),
+                                            locality=sub.get("locality", ""),
+                                            alert_type=a_type,
+                                            max_level=m_lvl,
+                                            reasons=reas_str,
+                                            started_at=s_at,
+                                            ended_at=e_at,
+                                            duration_seconds=dur_sec
+                                        )
+                                    except Exception as hist_err:
+                                        logger.error(f"Failed to record alert history for {user_id}: {hist_err}")
 
                             await repost_alert_message_to_bottom(
                                 bot=application.bot,

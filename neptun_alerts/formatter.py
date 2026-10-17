@@ -352,10 +352,58 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
     lines.append(f"\n⏱ <b>Оновлено:</b> {now_tz} | <a href=\"https://neptun.in.ua/\">NEPTUN Map</a>")
     return "\n".join(lines)
 
+def _normalize_time_display(t_str: str) -> str:
+    """Нормалізує рядок часу до вигляду HH:MM (DD.MM) за Києвом, якщо передано ISO 8601."""
+    if not t_str:
+        return ""
+    if "T" in t_str:
+        try:
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo("Europe/Kyiv")
+            except Exception:
+                tz = pytz.timezone("Europe/Kiev")
+            dt = datetime.fromisoformat(t_str.replace("Z", "+00:00")).astimezone(tz)
+            return dt.strftime("%H:%M (%d.%m)")
+        except Exception:
+            pass
+    return t_str
+
+def _format_time_range(s_str: str, e_str: str) -> str:
+    """
+    Форматує діапазон часу тривоги:
+    - однаковий день: 03:13 — 19:44 (17.10)
+    - різні дні: 23:38 (16.10) — 00:03 (17.10)
+    """
+    s = _normalize_time_display(s_str)
+    e = _normalize_time_display(e_str)
+
+    if not s and not e:
+        return "Невідомий час"
+    if not s:
+        return f"до {e}"
+    if not e:
+        return f"з {s}"
+
+    import re
+    s_match = re.match(r"^(\d{2}:\d{2})\s+\((\d{2}\.\d{2})\)$", s)
+    e_match = re.match(r"^(\d{2}:\d{2})\s+\((\d{2}\.\d{2})\)$", e)
+
+    if s_match and e_match:
+        s_time, s_date = s_match.groups()
+        e_time, e_date = e_match.groups()
+        if s_date == e_date:
+            return f"{s_time} — {e_time} ({s_date})"
+        else:
+            return f"{s_time} ({s_date}) — {e_time} ({e_date})"
+
+    return f"{s} — {e}"
+
 def format_alerts_history_message(sub: dict, records: list[dict], stats: dict = None) -> str:
     """
     Формує повідомлення з історією останніх тривог та статистикою для району користувача.
     """
+    sub = sub or {}
     oblast = sub.get("oblast") or "Невідома область"
     raion = sub.get("raion") or ""
     locality = sub.get("locality") or ""
@@ -395,7 +443,8 @@ def format_alerts_history_message(sub: dict, records: list[dict], stats: dict = 
             type_icon = "💥" if a_type == "ARTILLERY" else ("🚨" if lvl == "red" else "⚠️")
             type_name = "Артилерія" if a_type == "ARTILLERY" else ("Червоний рівень" if lvl == "red" else "Жовтий рівень")
 
-            lines.append(f"\n{idx}. {type_icon} <b>{s_time} — {e_time}</b> (<b>{dur_text}</b>)")
+            time_range = _format_time_range(s_time, e_time)
+            lines.append(f"\n{idx}. {type_icon} <b>{time_range}</b> (<b>{dur_text}</b>)")
             lines.append(f"   ↳ {type_name}" + (f": <i>{html.escape(reasons[:60])}</i>" if reasons else ""))
 
         if stats:

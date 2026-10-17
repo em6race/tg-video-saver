@@ -735,6 +735,9 @@ def record_alert_history_sync(
     ended_at: str,
     duration_seconds: int
 ):
+    if not started_at or int(duration_seconds) < 1:
+        logger.debug(f"Skipping empty or zero duration alert history record for user {user_id}")
+        return
     now = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -758,6 +761,9 @@ async def record_alert_history(
     ended_at: str,
     duration_seconds: int
 ):
+    if not started_at or int(duration_seconds) < 1:
+        logger.debug(f"Skipping empty or zero duration alert history record for user {user_id}")
+        return
     if aiosqlite is None:
         return await asyncio.to_thread(
             record_alert_history_sync,
@@ -777,7 +783,7 @@ def get_user_alert_history_sync(user_id: int, limit: int = 5) -> list[dict]:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT id, oblast, raion, locality, alert_type, max_level, reasons, started_at, ended_at, duration_seconds, created_at
-            FROM alert_history WHERE user_id=?
+            FROM alert_history WHERE user_id=? AND started_at != '' AND started_at IS NOT NULL
             ORDER BY id DESC LIMIT ?
         ''', (int(user_id), int(limit)))
         rows = cursor.fetchall()
@@ -804,7 +810,7 @@ async def get_user_alert_history(user_id: int, limit: int = 5) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute('''
             SELECT id, oblast, raion, locality, alert_type, max_level, reasons, started_at, ended_at, duration_seconds, created_at
-            FROM alert_history WHERE user_id=?
+            FROM alert_history WHERE user_id=? AND started_at != '' AND started_at IS NOT NULL
             ORDER BY id DESC LIMIT ?
         ''', (int(user_id), int(limit))) as cursor:
             rows = await cursor.fetchall()
@@ -832,7 +838,7 @@ def get_user_alert_stats_sync(user_id: int, days: int = 7) -> dict:
         cursor.execute('''
             SELECT COUNT(*), COALESCE(SUM(duration_seconds), 0)
             FROM alert_history
-            WHERE user_id=? AND created_at >= ?
+            WHERE user_id=? AND created_at >= ? AND started_at != '' AND started_at IS NOT NULL
         ''', (int(user_id), cutoff))
         row = cursor.fetchone()
         return {
@@ -848,7 +854,7 @@ async def get_user_alert_stats(user_id: int, days: int = 7) -> dict:
         async with db.execute('''
             SELECT COUNT(*), COALESCE(SUM(duration_seconds), 0)
             FROM alert_history
-            WHERE user_id=? AND created_at >= ?
+            WHERE user_id=? AND created_at >= ? AND started_at != '' AND started_at IS NOT NULL
         ''', (int(user_id), cutoff)) as cursor:
             row = await cursor.fetchone()
             return {
