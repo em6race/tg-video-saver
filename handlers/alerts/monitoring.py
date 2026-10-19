@@ -9,7 +9,15 @@ import subprocess
 from datetime import datetime
 import pytz
 
-from database import set_user_last_alert_msg_id, get_all_enabled_subscriptions, get_user_subscription, record_alert_history
+from database import (
+    set_user_last_alert_msg_id,
+    get_all_enabled_subscriptions,
+    get_user_subscription,
+    record_alert_history,
+    add_alert_message_record,
+    get_user_alert_message_ids,
+    delete_alert_message_records,
+)
 from neptun_alerts import (
     fetch_neptun_data,
     fetch_ukraine_alarm_data,
@@ -24,6 +32,7 @@ from handlers.alerts.state import (
     _user_last_auto_edit_time,
     _user_last_putin_date,
     _user_active_alert_meta,
+    _user_active_msg_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,7 +65,7 @@ def _parse_alert_start_time(since_val: str = None, fallback_ts: float = None) ->
     return dt.strftime("%H:%M (%d.%m)"), fallback_ts
 
 async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: dict, current_state: dict, is_manual_check: bool = False, prev_level: str = None, extra_msg_id_to_delete: int = None) -> None:
-    """Видаляє попереднє повідомлення тривоги та надсилає НОВЕ насамкінець чату."""
+    """Видаляє всі відомі попередні повідомлення тривоги та надсилає НОВЕ насамкінець чату."""
     last_msg_id = sub.get("last_alert_msg_id") if sub else None
 
     msg_ids_to_delete = set()
@@ -72,11 +81,30 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
     except Exception:
         pass
 
-    for m_id in msg_ids_to_delete:
+    # Отримуємо всі зареєстровані повідомлення з БД
+    try:
+        db_ids = await get_user_alert_message_ids(user_id)
+        for d_id in db_ids:
+            msg_ids_to_delete.add(d_id)
+    except Exception as db_err:
+        logger.debug(f"Could not load alert messages from DB for user {user_id}: {db_err}")
+
+    # Отримуємо повідомлення з оперативної пам'яті
+    if user_id in _user_active_msg_ids:
+        msg_ids_to_delete.update(_user_active_msg_ids[user_id])
+
+    for m_id in list(msg_ids_to_delete):
         try:
             await bot.delete_message(chat_id=chat_id, message_id=m_id)
         except Exception as del_err:
             logger.debug(f"Could not delete old alert message {m_id} for user {user_id}: {del_err}")
+
+    # Очищаємо застарілі ID у БД та пам'яті
+    try:
+        await delete_alert_message_records(user_id)
+    except Exception:
+        pass
+    _user_active_msg_ids[user_id] = set()
 
     sound_enabled = sub.get("sound_enabled", True) if sub else True
     putin_enabled = sub.get("putin_check_enabled", True) if sub else True
@@ -97,6 +125,8 @@ async def repost_alert_message_to_bottom(bot, chat_id: int, user_id: int, sub: d
         if sub is not None:
             sub["last_alert_msg_id"] = sent_msg.message_id
         await set_user_last_alert_msg_id(user_id, sent_msg.message_id)
+        await add_alert_message_record(user_id, chat_id, sent_msg.message_id)
+        _user_active_msg_ids[user_id] = {sent_msg.message_id}
     except Exception as send_err:
         logger.warning(f"Could not repost alert message to bottom for {chat_id}: {send_err}")
 

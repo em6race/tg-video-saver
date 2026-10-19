@@ -107,6 +107,13 @@ def init_db():
             )
         ''')
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_alert_messages_user ON alert_messages(user_id)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_messages_unique ON alert_messages(user_id, message_id)")
+        cursor.execute('''
+            INSERT OR IGNORE INTO alert_messages (user_id, chat_id, message_id, created_at)
+            SELECT user_id, chat_id, last_alert_msg_id, datetime('now')
+            FROM alert_subscriptions
+            WHERE last_alert_msg_id IS NOT NULL AND last_alert_msg_id > 0
+        ''')
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS alert_history (
@@ -524,7 +531,7 @@ def add_alert_message_record_sync(user_id: int, chat_id: int, message_id: int):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO alert_messages (user_id, chat_id, message_id, created_at)
+            INSERT OR IGNORE INTO alert_messages (user_id, chat_id, message_id, created_at)
             VALUES (?, ?, ?, ?)
         ''', (int(user_id), int(chat_id), int(message_id), now))
         conn.commit()
@@ -535,7 +542,7 @@ async def add_alert_message_record(user_id: int, chat_id: int, message_id: int):
     now = datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
-            INSERT INTO alert_messages (user_id, chat_id, message_id, created_at)
+            INSERT OR IGNORE INTO alert_messages (user_id, chat_id, message_id, created_at)
             VALUES (?, ?, ?, ?)
         ''', (int(user_id), int(chat_id), int(message_id), now))
         await db.commit()

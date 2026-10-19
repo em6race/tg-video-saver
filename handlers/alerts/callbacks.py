@@ -15,6 +15,8 @@ from database import (
     get_user_alert_history,
     get_user_alert_stats,
     set_user_last_alert_msg_id,
+    add_alert_message_record,
+    delete_alert_message_records,
     toggle_user_sound,
     toggle_user_putin,
     revoke_invite,
@@ -54,6 +56,7 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
     _user_last_manual_refresh,
+    _user_active_msg_ids,
 )
 from handlers.alerts.location import (
     prompt_location_confirmation,
@@ -411,7 +414,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Завантажую історію...")
         sub = await get_user_subscription(user_id)
         if not sub or not sub.get("oblast"):
-            await query.message.reply_text("📍 Спочатку оберіть місто або область:\n/alerts", parse_mode="HTML")
+            await query.answer("📍 Спочатку оберіть місто або область!", show_alert=True)
             return
         records = await get_user_alert_history(user_id, limit=5)
         stats = await get_user_alert_stats(user_id, days=7)
@@ -425,11 +428,31 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("⚙️ Меню", callback_data="alerts_settings_menu")
             ]
         ])
-        await query.message.reply_text(
-            msg_text,
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
+        try:
+            await query.edit_message_text(
+                text=msg_text,
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+        except Exception as edit_err:
+            logger.debug(f"In-place edit failed for alerts_history ({edit_err}), falling back to repost...")
+            try:
+                sent = await query.message.reply_text(
+                    text=msg_text,
+                    reply_markup=kb,
+                    parse_mode="HTML"
+                )
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                if sub is not None:
+                    sub["last_alert_msg_id"] = sent.message_id
+                await set_user_last_alert_msg_id(user_id, sent.message_id)
+                await add_alert_message_record(user_id, query.message.chat_id, sent.message_id)
+                _user_active_msg_ids[user_id] = {sent.message_id}
+            except Exception as reply_err:
+                logger.error(f"Failed fallback reply for alerts_history: {reply_err}")
         return
 
     elif choice == "alerts_map_refresh":
@@ -458,8 +481,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 ]
             ])
 
+            old_msg = query.message
+            sent_photo = None
             with open(map_path, "rb") as photo_file:
-                await query.message.reply_photo(
+                sent_photo = await old_msg.reply_photo(
                     photo=photo_file,
                     caption=caption,
                     reply_markup=inline_kb,
@@ -468,11 +493,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             if os.path.exists(map_path):
                 os.remove(map_path)
 
-            if query.message and query.message.photo:
+            if old_msg:
                 try:
-                    await query.message.delete()
+                    await old_msg.delete()
                 except Exception:
                     pass
+
+            if sent_photo:
+                if sub is not None:
+                    sub["last_alert_msg_id"] = sent_photo.message_id
+                await set_user_last_alert_msg_id(user_id, sent_photo.message_id)
+                await add_alert_message_record(user_id, old_msg.chat_id, sent_photo.message_id)
+                _user_active_msg_ids[user_id] = {sent_photo.message_id}
         except Exception as e:
             logger.error(f"Error refreshing map: {e}")
             await query.message.reply_text(f"❌ Не вдалося оновити карту: `{e}`")

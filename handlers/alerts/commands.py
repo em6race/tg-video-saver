@@ -13,6 +13,9 @@ from database import (
     get_user_subscription,
     get_user_alert_history,
     get_user_alert_stats,
+    set_user_last_alert_msg_id,
+    add_alert_message_record,
+    delete_alert_message_records,
 )
 from neptun_alerts import (
     forward_geocode,
@@ -35,6 +38,7 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
     _user_last_manual_refresh,
+    _user_active_msg_ids,
 )
 from handlers.alerts.location import prompt_location_confirmation
 from handlers.alerts.monitoring import repost_alert_message_to_bottom
@@ -110,11 +114,22 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("❌ Закрити меню", callback_data="close_menu")]
     ])
 
-    await update.effective_message.reply_text(
-        msg_text,
+    sent_menu = await context.bot.send_message(
+        chat_id=chat_id,
+        text=msg_text,
         reply_markup=inline_kb,
         parse_mode="Markdown"
     )
+    if sub and sub.get("last_alert_msg_id"):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_alert_msg_id"])
+        except Exception:
+            pass
+    if sub is not None:
+        sub["last_alert_msg_id"] = sent_menu.message_id
+    await set_user_last_alert_msg_id(user_id, sent_menu.message_id)
+    await add_alert_message_record(user_id, chat_id, sent_menu.message_id)
+    _user_active_msg_ids[user_id] = {sent_menu.message_id}
 
 async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -192,8 +207,11 @@ async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             ]
         ])
 
+        chat_id = update.effective_chat.id
+        sent_photo = None
         with open(map_path, "rb") as photo_file:
-            await update.message.reply_photo(
+            sent_photo = await context.bot.send_photo(
+                chat_id=chat_id,
                 photo=photo_file,
                 caption=caption,
                 reply_markup=inline_kb,
@@ -202,7 +220,22 @@ async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         if os.path.exists(map_path):
             os.remove(map_path)
-        await status_msg.delete()
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+        if sub and sub.get("last_alert_msg_id"):
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_alert_msg_id"])
+            except Exception:
+                pass
+        if sent_photo:
+            if sub is not None:
+                sub["last_alert_msg_id"] = sent_photo.message_id
+            await set_user_last_alert_msg_id(user_id, sent_photo.message_id)
+            await add_alert_message_record(user_id, chat_id, sent_photo.message_id)
+            _user_active_msg_ids[user_id] = {sent_photo.message_id}
 
     except Exception as e:
         logger.error(f"Error generating map: {e}")
@@ -398,8 +431,20 @@ async def alerts_history_command(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("⚙️ Меню", callback_data="alerts_settings_menu")
         ]
     ])
-    await update.effective_message.reply_text(
-        msg_text,
+    chat_id = update.effective_chat.id
+    sent_history = await context.bot.send_message(
+        chat_id=chat_id,
+        text=msg_text,
         reply_markup=kb,
         parse_mode="HTML"
     )
+    if sub and sub.get("last_alert_msg_id"):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_alert_msg_id"])
+        except Exception:
+            pass
+    if sub is not None:
+        sub["last_alert_msg_id"] = sent_history.message_id
+    await set_user_last_alert_msg_id(user_id, sent_history.message_id)
+    await add_alert_message_record(user_id, chat_id, sent_history.message_id)
+    _user_active_msg_ids[user_id] = {sent_history.message_id}

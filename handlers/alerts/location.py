@@ -101,6 +101,15 @@ async def save_and_confirm_location(update: Update, context: ContextTypes.DEFAUL
         parse_mode="Markdown"
     )
 
+    async def _auto_delete_confirm(m):
+        await asyncio.sleep(4)
+        try:
+            await m.delete()
+        except Exception:
+            pass
+
+    asyncio.create_task(_auto_delete_confirm(confirm_msg))
+
     try:
         alerts_data, threats_data = await fetch_neptun_data()
         ua_data = await fetch_ukraine_alarm_data()
