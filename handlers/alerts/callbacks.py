@@ -14,16 +14,12 @@ from database import (
     get_user_subscription,
     get_user_alert_history,
     get_user_alert_stats,
-    set_user_last_alert_msg_id,
-    add_alert_message_record,
-    delete_alert_message_records,
     toggle_user_sound,
     toggle_user_putin,
     revoke_invite,
     clear_unused_invites,
 )
 from neptun_alerts import (
-    forward_geocode,
     fetch_neptun_data,
     fetch_ukraine_alarm_data,
     evaluate_user_alert_state,
@@ -35,7 +31,6 @@ from neptun_alerts import (
 )
 from keyboards import (
     get_alert_inline_keyboard,
-    get_alert_settings_keyboard,
     build_alert_settings_view,
     get_main_reply_keyboard,
     ALERT_REFRESH_COOLDOWN,
@@ -44,7 +39,6 @@ from handlers.common import (
     check_access,
     help_command,
     is_media_plugin_enabled,
-    is_alerts_plugin_enabled,
     ADMIN_ID,
 )
 from handlers.admin import (
@@ -56,21 +50,22 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
     _user_last_manual_refresh,
-    _user_active_msg_ids,
 )
 from handlers.alerts.location import (
-    prompt_location_confirmation,
     save_and_confirm_location,
 )
 from handlers.alerts.commands import (
     alerts_command,
-    status_command,
-    map_command,
     handle_manual_alert_refresh,
 )
-from handlers.alerts.monitoring import repost_alert_message_to_bottom
+from handlers.alerts.monitoring import (
+    repost_alert_message_to_bottom,
+    replace_active_alert_message,
+    is_message_missing_error,
+)
 
 logger = logging.getLogger(__name__)
+
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -327,6 +322,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         sub = await get_user_subscription(user_id)
         if sub and sub.get("oblast"):
+            current_state = None
             try:
                 alerts_data, threats_data = await fetch_neptun_data()
                 ua_data = await fetch_ukraine_alarm_data()
@@ -345,16 +341,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     disable_web_page_preview=True
                 )
             except Exception as e:
-                logger.debug(f"Failed in-place edit on back_to_status: {e}")
-                await repost_alert_message_to_bottom(
-                    bot=context.bot,
-                    chat_id=query.message.chat_id,
-                    user_id=user_id,
-                    sub=sub,
-                    current_state=current_state,
-                    is_manual_check=True,
-                    extra_msg_id_to_delete=query.message.message_id
-                )
+                if "message is not modified" in str(e).lower():
+                    pass
+                elif current_state and is_message_missing_error(e):
+                    logger.debug(f"In-place edit target missing on back_to_status ({e}), reposting...")
+                    await repost_alert_message_to_bottom(
+                        bot=context.bot,
+                        chat_id=query.message.chat_id,
+                        user_id=user_id,
+                        sub=sub,
+                        current_state=current_state,
+                        is_manual_check=True,
+                        extra_msg_id_to_delete=query.message.message_id
+                    )
+                else:
+                    logger.warning(f"Transient error on back_to_status for {user_id}: {e}")
         return
 
     elif choice == "toggle_sound":
@@ -435,24 +436,28 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode="HTML"
             )
         except Exception as edit_err:
-            logger.debug(f"In-place edit failed for alerts_history ({edit_err}), falling back to repost...")
-            try:
-                sent = await query.message.reply_text(
-                    text=msg_text,
-                    reply_markup=kb,
-                    parse_mode="HTML"
-                )
+            if "message is not modified" in str(edit_err).lower():
+                pass
+            elif is_message_missing_error(edit_err):
+                logger.debug(f"In-place edit target missing for alerts_history ({edit_err}), falling back to repost...")
                 try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                if sub is not None:
-                    sub["last_alert_msg_id"] = sent.message_id
-                await set_user_last_alert_msg_id(user_id, sent.message_id)
-                await add_alert_message_record(user_id, query.message.chat_id, sent.message_id)
-                _user_active_msg_ids[user_id] = {sent.message_id}
-            except Exception as reply_err:
-                logger.error(f"Failed fallback reply for alerts_history: {reply_err}")
+                    sent = await query.message.reply_text(
+                        text=msg_text,
+                        reply_markup=kb,
+                        parse_mode="HTML"
+                    )
+                    await replace_active_alert_message(
+                        bot=context.bot,
+                        chat_id=query.message.chat_id,
+                        user_id=user_id,
+                        sub=sub,
+                        new_msg_id=sent.message_id,
+                        extra_msg_id_to_delete=query.message.message_id,
+                    )
+                except Exception as reply_err:
+                    logger.error(f"Failed fallback reply for alerts_history: {reply_err}")
+            else:
+                logger.warning(f"Transient error editing alerts_history for {user_id}: {edit_err}")
         return
 
     elif choice == "alerts_map_refresh":
@@ -493,18 +498,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             if os.path.exists(map_path):
                 os.remove(map_path)
 
-            if old_msg:
-                try:
-                    await old_msg.delete()
-                except Exception:
-                    pass
-
             if sent_photo:
-                if sub is not None:
-                    sub["last_alert_msg_id"] = sent_photo.message_id
-                await set_user_last_alert_msg_id(user_id, sent_photo.message_id)
-                await add_alert_message_record(user_id, old_msg.chat_id, sent_photo.message_id)
-                _user_active_msg_ids[user_id] = {sent_photo.message_id}
+                await replace_active_alert_message(
+                    bot=context.bot,
+                    chat_id=old_msg.chat_id,
+                    user_id=user_id,
+                    sub=sub,
+                    new_msg_id=sent_photo.message_id,
+                    extra_msg_id_to_delete=old_msg.message_id if old_msg else None,
+                )
         except Exception as e:
             logger.error(f"Error refreshing map: {e}")
             await query.message.reply_text(f"❌ Не вдалося оновити карту: `{e}`")
@@ -671,6 +673,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception:
                 pass
         return
+
 
 from handlers.alerts.text_input import handle_unknown
 

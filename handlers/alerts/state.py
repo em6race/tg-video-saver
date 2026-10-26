@@ -9,3 +9,5 @@ _user_last_manual_refresh = {}      # user_id -> час останнього з�
 _user_last_putin_date = {}          # user_id -> дата останнього оновлення статусу путіна ("ДД.ММ.РРРР")
 _user_active_alert_meta = {}        # user_id -> метадані поточної тривоги (started_at, alert_type, max_level, reasons)
 _user_active_msg_ids = {}           # user_id -> множина ID активних повідомлень бота в чаті
+_user_failed_send_anchor = {}       # user_id -> останній відомий message_id перед таймаутом send_message
+_user_last_send_attempt = {}        # user_id -> час останньої невдалої спроби send_message

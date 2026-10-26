@@ -3,7 +3,7 @@ import time
 import logging
 from datetime import datetime
 import pytz
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from database import (
@@ -13,9 +13,6 @@ from database import (
     get_user_subscription,
     get_user_alert_history,
     get_user_alert_stats,
-    set_user_last_alert_msg_id,
-    add_alert_message_record,
-    delete_alert_message_records,
 )
 from neptun_alerts import (
     forward_geocode,
@@ -38,12 +35,16 @@ from handlers.alerts.state import (
     _user_last_alert_state,
     _user_last_threat_signature,
     _user_last_manual_refresh,
-    _user_active_msg_ids,
 )
 from handlers.alerts.location import prompt_location_confirmation
-from handlers.alerts.monitoring import repost_alert_message_to_bottom
+from handlers.alerts.monitoring import (
+    repost_alert_message_to_bottom,
+    replace_active_alert_message,
+    is_message_missing_error,
+)
 
 logger = logging.getLogger(__name__)
+
 
 async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -120,16 +121,14 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=inline_kb,
         parse_mode="Markdown"
     )
-    if sub and sub.get("last_alert_msg_id"):
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_alert_msg_id"])
-        except Exception:
-            pass
-    if sub is not None:
-        sub["last_alert_msg_id"] = sent_menu.message_id
-    await set_user_last_alert_msg_id(user_id, sent_menu.message_id)
-    await add_alert_message_record(user_id, chat_id, sent_menu.message_id)
-    _user_active_msg_ids[user_id] = {sent_menu.message_id}
+    await replace_active_alert_message(
+        bot=context.bot,
+        chat_id=chat_id,
+        user_id=user_id,
+        sub=sub,
+        new_msg_id=sent_menu.message_id,
+    )
+
 
 async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -160,6 +159,7 @@ async def alerts_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         await alerts_command(update, context)
 
+
 async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
         return
@@ -175,6 +175,7 @@ async def alerts_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=get_main_reply_keyboard(),
         parse_mode="Markdown"
     )
+
 
 async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update, context):
@@ -225,21 +226,19 @@ async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception:
             pass
 
-        if sub and sub.get("last_alert_msg_id"):
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_alert_msg_id"])
-            except Exception:
-                pass
         if sent_photo:
-            if sub is not None:
-                sub["last_alert_msg_id"] = sent_photo.message_id
-            await set_user_last_alert_msg_id(user_id, sent_photo.message_id)
-            await add_alert_message_record(user_id, chat_id, sent_photo.message_id)
-            _user_active_msg_ids[user_id] = {sent_photo.message_id}
+            await replace_active_alert_message(
+                bot=context.bot,
+                chat_id=chat_id,
+                user_id=user_id,
+                sub=sub,
+                new_msg_id=sent_photo.message_id,
+            )
 
     except Exception as e:
         logger.error(f"Error generating map: {e}")
         await status_msg.edit_text(f"❌ Не вдалося створити карту: `{e}`", parse_mode="Markdown")
+
 
 async def handle_manual_alert_refresh(query, user_id: int) -> None:
     """Обробляє ручне оновлення інформації про тривогу користувачем з кулдауном."""
@@ -290,8 +289,13 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
                 )
                 edited_inplace = True
             except Exception as edit_err:
-                logger.debug(f"In-place edit on refresh failed ({edit_err}), falling back to repost...")
-                edited_inplace = False
+                if "message is not modified" in str(edit_err).lower():
+                    edited_inplace = True
+                elif is_message_missing_error(edit_err):
+                    logger.debug(f"In-place edit on refresh target missing ({edit_err}), falling back to repost...")
+                    edited_inplace = False
+                else:
+                    raise edit_err
 
         if not edited_inplace:
             await repost_alert_message_to_bottom(
@@ -316,6 +320,7 @@ async def handle_manual_alert_refresh(query, user_id: int) -> None:
             await query.answer(f"❌ Не вдалося оновити статус: {e}", show_alert=True)
         except Exception:
             pass
+
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /status або /check для ручної перевірки ситуації з кулдауном."""
@@ -370,6 +375,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error(f"Error in status_command: {e}")
         await status_msg.edit_text(f"❌ Не вдалося отримати статус: `{e}`", parse_mode="Markdown")
 
+
 async def putin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обробник команди /putin — показує актуальний статус чи здох путін."""
     if not await check_access(update, context):
@@ -403,6 +409,7 @@ async def putin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reply_markup=kb,
         parse_mode="HTML"
     )
+
 
 async def alerts_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обробник команди /history — показує історію тривог та статистику для району користувача."""
@@ -438,13 +445,10 @@ async def alerts_history_command(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=kb,
         parse_mode="HTML"
     )
-    if sub and sub.get("last_alert_msg_id"):
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=sub["last_alert_msg_id"])
-        except Exception:
-            pass
-    if sub is not None:
-        sub["last_alert_msg_id"] = sent_history.message_id
-    await set_user_last_alert_msg_id(user_id, sent_history.message_id)
-    await add_alert_message_record(user_id, chat_id, sent_history.message_id)
-    _user_active_msg_ids[user_id] = {sent_history.message_id}
+    await replace_active_alert_message(
+        bot=context.bot,
+        chat_id=chat_id,
+        user_id=user_id,
+        sub=sub,
+        new_msg_id=sent_history.message_id,
+    )
