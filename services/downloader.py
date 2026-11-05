@@ -38,6 +38,7 @@ def _download_video_sync(url: str) -> str:
         'merge_output_format': 'mp4',
         'postprocessor_args': ['-threads', '1'],
         'concurrent_fragment_downloads': 10,
+        'remote_components': ['ejs:github'],
     }
     
     if os.path.exists(COOKIES_FILE):
@@ -84,6 +85,7 @@ def _download_audio_sync(query: str, original_title: str = "", expected_duration
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        'remote_components': ['ejs:github'],
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -113,6 +115,7 @@ def _download_audio_sync(query: str, original_title: str = "", expected_duration
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': True,
+                'remote_components': ['ejs:github'],
             }
             if os.path.exists(COOKIES_FILE):
                 search_opts['cookiefile'] = COOKIES_FILE
@@ -121,11 +124,22 @@ def _download_audio_sync(query: str, original_title: str = "", expected_duration
                 yt_res = ydl_s.extract_info(query, download=False)
                 yt_entries = yt_res.get('entries', []) if yt_res else []
 
+            valid_yt = []
             for yt_cand in yt_entries:
                 cand_title = yt_cand.get('title', '')
                 if original_title and _is_junk_title(cand_title, original_title):
                     print(f"[DEBUG] Skipping junk YouTube candidate: {cand_title}")
                     continue
+                cand_dur = yt_cand.get('duration')
+                if expected_duration and cand_dur and abs(cand_dur - expected_duration) > 20:
+                    print(f"[DEBUG] Skipping duration mismatch YouTube candidate: {cand_title} ({cand_dur}s vs {expected_duration}s)")
+                    continue
+                valid_yt.append(yt_cand)
+
+            if expected_duration and valid_yt:
+                valid_yt.sort(key=lambda x: abs((x.get('duration') or 0) - expected_duration))
+
+            for yt_cand in valid_yt:
                 cand_url = yt_cand.get('url') or yt_cand.get('webpage_url')
                 if not cand_url:
                     continue
@@ -169,6 +183,7 @@ def _download_audio_sync(query: str, original_title: str = "", expected_duration
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': True,
+                'remote_components': ['ejs:github'],
             }
             if os.path.exists(COOKIES_FILE):
                 search_opts['cookiefile'] = COOKIES_FILE
