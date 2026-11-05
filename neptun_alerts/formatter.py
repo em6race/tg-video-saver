@@ -289,7 +289,10 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
 
     # 2. Блок цілей на підльоті
     if threats:
-        lines.append(f"\n{e('radar')} <b>Зафіксовані цілі поруч / в області:</b>")
+        if sub and sub.get("lat") is not None and sub.get("lon") is not None:
+            lines.append(f"\n{e('radar')} <b>Зафіксовані цілі поруч (радіус ~110 км):</b>")
+        else:
+            lines.append(f"\n{e('radar')} <b>Зафіксовані цілі в області:</b>")
         for t in threats:
             dist_str = f" <i>(~{t['distance_km']} км)</i>" if t.get("distance_km") is not None else ""
             towards_tag = " ⚠️ <b>у ваш бік!</b>" if t.get("is_towards_user") else ""
@@ -316,7 +319,7 @@ def format_alert_message(sub: dict, state: dict, is_manual_check: bool = False, 
                 lines.append(f"  {html.escape(dir_str)}")
     elif level in ("red", "yellow"):
         if sub and sub.get("lat") is not None and sub.get("lon") is not None:
-            lines.append(f"\n{e('radar')} <b>Радар:</b> <i>Прямих цілей у вашому радіусі (~80 км) наразі не виявлено (триває дорозвідка або загроза на підльоті).</i>")
+            lines.append(f"\n{e('radar')} <b>Радар:</b> <i>Прямих цілей у вашому радіусі (~110 км) наразі не виявлено (триває дорозвідка або загроза на підльоті).</i>")
         else:
             lines.append(f"\n{e('radar')} <b>Радар:</b> <i>Прямих цілей у вашій області наразі не виявлено (триває дорозвідка або загроза на підльоті).</i>")
 

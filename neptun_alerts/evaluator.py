@@ -310,8 +310,9 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
 
         is_fast_threat = t_type in fast_types or any(w in raw_expl_lower for w in fast_keywords)
 
-        towards_dist_limit = 80 if is_fast_threat else 30
-        close_dist_limit = 150 if is_fast_threat else 80
+        # Радіуси виявлення загроз навколо користувача:
+        towards_dist_limit = 200 if is_fast_threat else 140
+        close_dist_limit = 180 if is_fast_threat else 110
 
         dist_km = None
         if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None and not area_only:
@@ -347,23 +348,26 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
 
         in_same_oblast = _match_oblast(user_oblast, t_region)
 
-        # Захист від помилок/аномалій у NEPTUN API (наприклад, track у морі з помилковим region: 'Чернігівська область'):
-        # 1. Якщо ціль над морем, а область користувача сухопутна — не вважаємо її ціллю в області
+        # 1. Захист від морських загроз у суходільних областях:
         sea_keywords = ('над морем', 'в морі', 'чорне море', 'азовське море', 'акваторі')
         sea_oblasts = ('одеська', 'миколаївська', 'херсонська', 'запорізька', 'донецька', 'крим')
         u_ob_lower = _normalize_apostrophe(user_oblast).lower()
         if any(w in raw_expl_lower for w in sea_keywords) and not any(so in u_ob_lower for so in sea_oblasts):
             in_same_oblast = False
 
-        # 2. Якщо відома точна відстань за координатами (GPS), перевіряємо чи вона реалістична для тієї ж області:
-        # Для БпЛА понад 220 км (а для ракет понад 300 км) ціль фізично не може належати до тієї ж області користувача.
-        max_oblast_radius = 300 if is_fast_threat else 220
-        if dist_km is not None and dist_km > max_oblast_radius:
-            in_same_oblast = False
+        # 2. Розумна фільтрація за локацією:
+        # Якщо у користувача є точна локація (GPS/місто) — показуємо реальний радіус безпеки 360°
+        # навколо нього (наприклад, 110 км у будь-якій сусідній області), або цілі курсом у його бік.
+        if dist_km is not None:
+            is_close = dist_km <= close_dist_limit
+            is_towards = is_towards_user and dist_km <= towards_dist_limit
+            is_in_oblast = in_same_oblast and dist_km <= (220 if is_fast_threat else 140)
+            should_include = is_close or is_towards or is_in_oblast
+        else:
+            # Якщо координат немає (обрано лише область без міста) — показуємо всі цілі в межах області
+            should_include = in_same_oblast
 
-        is_close = dist_km is not None and dist_km <= close_dist_limit
-
-        if in_same_oblast or is_close:
+        if should_include:
             raw_expl = t.get("explanationShort") or t.get("title", "Зафіксовано ціль")
             cleaned_expl = _clean_threat_explanation(raw_expl)
             
