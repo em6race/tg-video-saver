@@ -346,6 +346,21 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
                 logger.debug(f"Heading calc error: {ge_err}")
 
         in_same_oblast = _match_oblast(user_oblast, t_region)
+
+        # Захист від помилок/аномалій у NEPTUN API (наприклад, track у морі з помилковим region: 'Чернігівська область'):
+        # 1. Якщо ціль над морем, а область користувача сухопутна — не вважаємо її ціллю в області
+        sea_keywords = ('над морем', 'в морі', 'чорне море', 'азовське море', 'акваторі')
+        sea_oblasts = ('одеська', 'миколаївська', 'херсонська', 'запорізька', 'донецька', 'крим')
+        u_ob_lower = _normalize_apostrophe(user_oblast).lower()
+        if any(w in raw_expl_lower for w in sea_keywords) and not any(so in u_ob_lower for so in sea_oblasts):
+            in_same_oblast = False
+
+        # 2. Якщо відома точна відстань за координатами (GPS), перевіряємо чи вона реалістична для тієї ж області:
+        # Для БпЛА понад 220 км (а для ракет понад 300 км) ціль фізично не може належати до тієї ж області користувача.
+        max_oblast_radius = 300 if is_fast_threat else 220
+        if dist_km is not None and dist_km > max_oblast_radius:
+            in_same_oblast = False
+
         is_close = dist_km is not None and dist_km <= close_dist_limit
 
         if in_same_oblast or is_close:
@@ -434,6 +449,8 @@ def evaluate_user_alert_state(sub: dict, alerts_data: dict, threats_data: dict, 
             dist_km = None
             if user_lat is not None and user_lon is not None and t_lat is not None and t_lon is not None:
                 dist_km = round(haversine_km(user_lat, user_lon, t_lat, t_lon))
+            if dist_km is not None and dist_km > 250:
+                in_same_oblast = False
             if in_same_oblast or (dist_km is not None and dist_km <= 150):
                 t_text = f"{t.get('explanationShort', '')} {t.get('title', '')}".lower()
                 if "дорозвід" in t_text:
