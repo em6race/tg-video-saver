@@ -81,7 +81,11 @@ async def process_audio(target_message, context, url):
         if "spotify" in url:
             track_info = await get_spotify_track_info(url)
             search_query = f"ytsearch5:{track_info['search_query']} Topic"
-            audio_result = await download_audio(search_query, original_title=track_info.get("title", ""))
+            audio_result = await download_audio(
+                search_query,
+                original_title=track_info.get("title", ""),
+                expected_duration=track_info.get("duration")
+            )
         else:
             audio_result = await download_audio(url)
             track_info = {

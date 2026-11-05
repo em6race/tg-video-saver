@@ -23,7 +23,8 @@ async def get_spotify_track_info(url: str) -> dict:
         "title": "Spotify Track",
         "performer": "Unknown Artist",
         "thumbnail_url": None,
-        "search_query": "Spotify Track"
+        "search_query": "Spotify Track",
+        "duration": None
     }
     
     try:
@@ -36,6 +37,13 @@ async def get_spotify_track_info(url: str) -> dict:
                         title_m = re.search(r'<meta property="og:title" content="(.*?)"', html_content)
                         desc_m = re.search(r'<meta property="og:description" content="(.*?)"', html_content)
                         img_m = re.search(r'<meta property="og:image" content="(.*?)"', html_content)
+                        dur_m = re.search(r'<meta\s+property="(?:music:duration|og:duration)"\s+content="(\d+)"', html_content)
+
+                        if dur_m:
+                            try:
+                                result["duration"] = int(dur_m.group(1))
+                            except Exception:
+                                pass
                         
                         if title_m:
                             result["title"] = html.unescape(title_m.group(1))

@@ -12,7 +12,8 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 JUNK_KEYWORDS = (
     'slowed', 'reverb', 'sped up', 'speed up', 'nightcore',
     'pitch', 'pitched', 'bass boosted', 'instrumental',
-    'cover', 'karaoke', 'edit', 'mashup', 'tiktok', '8d audio', 'flip'
+    'cover', 'karaoke', 'edit', 'mashup', 'tiktok', '8d audio', 'flip',
+    'extended', 'intro', 'outro', 'remake', 'leak', 'unreleased', 'snippet', 'loop', 'remaster'
 )
 
 def _is_junk_title(candidate_title: str, expected_title: str = "") -> bool:
@@ -73,7 +74,7 @@ import subprocess
 import time
 import signal
 
-def _download_audio_sync(query: str, original_title: str = "") -> dict:
+def _download_audio_sync(query: str, original_title: str = "", expected_duration: int = None) -> dict:
     file_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOADS_DIR, f"{file_id}.%(ext)s")
     
@@ -224,13 +225,25 @@ def _download_audio_sync(query: str, original_title: str = "") -> dict:
         fallback_candidates = []
         for sc_entry in sc_entries:
             cand_t = sc_entry.get('title') or ''
-            if _is_junk_title(cand_t, original_title):
-                print(f"[DEBUG] Postponing junk SoundCloud candidate: {cand_t}")
+            cand_dur = sc_entry.get('duration')
+            is_junk = _is_junk_title(cand_t, original_title)
+            dur_mismatch = False
+            if expected_duration and cand_dur:
+                if abs(cand_dur - expected_duration) > 15:
+                    dur_mismatch = True
+
+            if is_junk or dur_mismatch:
+                print(f"[DEBUG] Postponing junk/mismatch candidate: {cand_t} (dur: {cand_dur}s vs exp: {expected_duration}s, junk: {is_junk})")
                 fallback_candidates.append(sc_entry)
             else:
                 valid_candidates.append(sc_entry)
 
-        for sc_idx, sc_entry in enumerate(valid_candidates + fallback_candidates):
+        if expected_duration and valid_candidates:
+            valid_candidates.sort(key=lambda x: abs((x.get('duration') or 0) - expected_duration))
+
+        # Якщо є перевірені чисті кандидати, перебираємо ТІЛЬКИ їх, щоб не надсилати сповільнені/модифіковані версії
+        candidates_to_try = valid_candidates if valid_candidates else (fallback_candidates if not expected_duration else [])
+        for sc_idx, sc_entry in enumerate(candidates_to_try):
             sc_url = sc_entry.get('url')
             if not sc_url:
                 continue
@@ -280,8 +293,8 @@ def _download_audio_sync(query: str, original_title: str = "") -> dict:
         'thumbnail_url': thumbnail
     }
 
-async def download_audio(query: str, original_title: str = "") -> dict:
+async def download_audio(query: str, original_title: str = "", expected_duration: int = None) -> dict:
     """
     Downloads audio from the given query (URL or ytsearch).
     """
-    return await asyncio.to_thread(_download_audio_sync, query, original_title)
+    return await asyncio.to_thread(_download_audio_sync, query, original_title, expected_duration)
