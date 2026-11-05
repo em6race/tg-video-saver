@@ -39,13 +39,15 @@ def _download_video_sync(url: str) -> str:
         'postprocessor_args': ['-threads', '1'],
         'concurrent_fragment_downloads': 10,
         'remote_components': ['ejs:github'],
+        'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
     }
     
     if os.path.exists(COOKIES_FILE):
         ydl_opts['cookiefile'] = COOKIES_FILE
 
     import shutil
-    if shutil.which("aria2c"):
+    is_yt = any(domain in url for domain in ["youtube.com", "youtu.be"])
+    if shutil.which("aria2c") and not is_yt:
         ydl_opts['external_downloader'] = 'aria2c'
         ydl_opts['external_downloader_args'] = ['-x', '10', '-s', '10', '-k', '1M']
     
@@ -86,6 +88,7 @@ def _download_audio_sync(query: str, original_title: str = "", expected_duration
         'no_warnings': True,
         'noplaylist': True,
         'remote_components': ['ejs:github'],
+        'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -97,11 +100,6 @@ def _download_audio_sync(query: str, original_title: str = "", expected_duration
 
     if os.path.exists(COOKIES_FILE):
         ydl_opts['cookiefile'] = COOKIES_FILE
-
-    import shutil
-    if shutil.which("aria2c"):
-        ydl_opts['external_downloader'] = 'aria2c'
-        ydl_opts['external_downloader_args'] = ['-x', '10', '-s', '10', '-k', '1M']
     
     filename = None
     info = None
@@ -116,6 +114,7 @@ def _download_audio_sync(query: str, original_title: str = "", expected_duration
                 'no_warnings': True,
                 'extract_flat': True,
                 'remote_components': ['ejs:github'],
+                'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
             }
             if os.path.exists(COOKIES_FILE):
                 search_opts['cookiefile'] = COOKIES_FILE
@@ -184,6 +183,7 @@ def _download_audio_sync(query: str, original_title: str = "", expected_duration
                 'no_warnings': True,
                 'extract_flat': True,
                 'remote_components': ['ejs:github'],
+                'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
             }
             if os.path.exists(COOKIES_FILE):
                 search_opts['cookiefile'] = COOKIES_FILE
