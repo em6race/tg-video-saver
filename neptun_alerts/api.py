@@ -22,7 +22,7 @@ _UKRAINE_ALARM_CACHE = {
     "data": []
 }
 
-UKRAINE_ALARM_CACHE_TTL = 20.0  # 20 секунд — захист від 401 рейт-ліміту API
+UKRAINE_ALARM_CACHE_TTL = 30.0  # 30 секунд — захист від 429 рейт-ліміту API
 
 async def fetch_neptun_data(force: bool = False) -> tuple[dict, dict]:
     """
@@ -59,11 +59,11 @@ async def fetch_neptun_data(force: bool = False) -> tuple[dict, dict]:
 async def fetch_ukraine_alarm_data(force: bool = False) -> list[dict]:
     """
     Отримує офіційні дані про повітряні тривоги з UkraineAlarm API (Stfalcon / Ajax).
-    Кешує результат на 20 секунд згідно з вимогами рейт-ліміту API.
+    Кешує результат на 25 секунд згідно з вимогами рейт-ліміту API.
     """
     global _UKRAINE_ALARM_CACHE
     now = time.time()
-    if not force and (now - _UKRAINE_ALARM_CACHE["timestamp"] < UKRAINE_ALARM_CACHE_TTL) and _UKRAINE_ALARM_CACHE["data"]:
+    if not force and (now - _UKRAINE_ALARM_CACHE["timestamp"] < UKRAINE_ALARM_CACHE_TTL):
         return _UKRAINE_ALARM_CACHE["data"]
 
     headers = {
@@ -80,9 +80,12 @@ async def fetch_ukraine_alarm_data(force: bool = False) -> list[dict]:
                         _UKRAINE_ALARM_CACHE["timestamp"] = now
                         _UKRAINE_ALARM_CACHE["data"] = data
                         return data
-                elif resp.status == 401:
-                    logger.debug("UkraineAlarm API 401 (rate-limit window active), serving from cache")
+                elif resp.status in (401, 429):
+                    # При 429 або 401 оновлюємо timestamp, щоб не спамити API кожні 10 секунд
+                    _UKRAINE_ALARM_CACHE["timestamp"] = now
+                    logger.debug(f"UkraineAlarm API {resp.status} (rate-limit window active), serving from cache")
                 else:
+                    _UKRAINE_ALARM_CACHE["timestamp"] = now
                     logger.warning(f"UkraineAlarm API status: {resp.status}")
     except Exception as e:
         logger.warning(f"Error fetching UkraineAlarm data: {e}")
