@@ -3,6 +3,17 @@ import re
 import html
 import urllib.parse
 
+def clean_track_title(title: str) -> str:
+    """Removes featured artists and track release qualifiers from title for clean searching."""
+    # (feat. ...), (with ...), [feat ...], [with ...], (ft. ...)
+    t = re.sub(r'[\(\[\{]\s*(?:feat|ft|with)\b.*?[\)\]\}]', '', title, flags=re.IGNORECASE)
+    # - Single, - Remastered, - Bonus Track, - Deluxe, etc.
+    t = re.sub(r'\s*-\s*(?:single|remaster(?:ed)?|bonus track|deluxe|anniversary|radio edit).*', '', t, flags=re.IGNORECASE)
+    # Normalize multiple whitespace
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
 async def get_spotify_track_info(url: str) -> dict:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
@@ -62,9 +73,11 @@ async def get_spotify_track_info(url: str) -> dict:
                 except Exception as oe_err:
                     print(f"Error fetching spotify oembed: {oe_err}")
 
-            title_clean = re.sub(r'\(feat\..*?\)', '', result["title"], flags=re.IGNORECASE).strip()
-            performer_clean = result["performer"].split(',')[0].strip() if result["performer"] != "Unknown Artist" else ""
-            result["search_query"] = f'{title_clean} {performer_clean}'.strip()
+            title_clean = clean_track_title(result["title"])
+            performer_clean = re.split(r'[,&/]', result["performer"])[0].strip() if result["performer"] != "Unknown Artist" else ""
+            result["clean_title"] = title_clean
+            result["clean_performer"] = performer_clean
+            result["search_query"] = f'{performer_clean} {title_clean}'.strip()
     except Exception as e:
         print(f"Error extracting spotify info: {e}")
         
